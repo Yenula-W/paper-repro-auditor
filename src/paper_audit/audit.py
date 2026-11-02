@@ -17,6 +17,9 @@ PASS, WARN, FAIL, NA = "PASS", "WARN", "FAIL", "N/A"
 CODE_TYPES = {"github", "gitlab", "bitbucket", "codeocean", "swh", "sourceforge", "pypi", "cran", "bioconductor"}
 MAX_LINKS = 30
 MAX_CLONES = 2
+CHECK_NAMES = {"dependency_file": "dependency file", "readme": "README", "readme_run_steps": "run instructions in README",
+               "entry_point": "entry-point script", "license_file": "license file",
+               "readme_scripts_exist": "scripts named in README"}
 REGISTRY_TYPES = {"pypi", "cran", "bioconductor"}
 # "TensorFlow v.1 (url)", "WRF v3.9.1.1 source code ... here: url", "developed with X (url)"
 TOOL_CUE = re.compile(r"(?:\bv\.?\s?\d[\w.]*|version\s+\d[\w.]*|developed\s+(?:with|using)|"
@@ -41,6 +44,12 @@ def _is_code(l: dict) -> bool:
 def _is_data(l: dict) -> bool:
     return not _is_code(l) and not l.get("third_party") and (
         l["kind"] in ("data", "archive") or (l["in_statement"] and l["kind"] == "doi"))
+
+
+def _why(l: dict) -> str:
+    if l["status"]:
+        return f"HTTP {l['status']}"
+    return "host name no longer resolves"
 
 
 def mark_third_party(links: List[dict]) -> None:
@@ -79,7 +88,7 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
     code_in_stmt = [l for l in code_links if l["in_statement"]]
 
     add("data_statement", "Data availability statement", PASS if data_st else FAIL,
-        data_st[0]["text"][:200] if data_st else "no data availability section found")
+        data_st[0]["text"][:200] if data_st else "no data availability statement found in the full text")
 
     if code_st:
         add("code_statement", "Code availability statement", PASS, code_st[0]["text"][:200])
@@ -89,7 +98,7 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
         add("code_statement", "Code availability statement", WARN, "no dedicated statement; code linked in body text")
     else:
         add("code_statement", "Code availability statement", FAIL if computational else NA,
-            "none found" + ("" if computational else " (paper does not look computational)"))
+            "no code availability statement found" + ("" if computational else " (the paper does not appear to rely on custom code)"))
 
     req_stmt = [p for p in ex["on_request"] if any(p[:40] in s["text"] or s["text"][:60] in p for s in stmts)]
     if ex["on_request"]:
@@ -111,16 +120,16 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
         add("code_link", "Code link present", WARN,
             "code statement gives no source repository (web service / description only)" + cited_note)
     else:
-        add("code_link", "Code link present", FAIL if computational else NA, "no code repository link" + cited_note)
+        add("code_link", "Code link present", FAIL if computational else NA, "no link to the authors' own code found" + cited_note)
 
     dead = [l for l in links if l["alive"] is False]
     unknown = [l for l in links if l["alive"] is None]
     if not links:
         add("links_alive", "All links resolve", NA, "no links")
     elif dead:
-        add("links_alive", "All links resolve", FAIL, "dead: " + ", ".join(f'{l["url"]} ({l["status"]})' for l in dead[:5]))
+        add("links_alive", "All links resolve", FAIL, "not reachable when checked: " + ", ".join(f'{l["url"]} ({_why(l)})' for l in dead[:5]))
     elif unknown:
-        add("links_alive", "All links resolve", WARN, "unverifiable (blocked/rate-limited): " + ", ".join(l["url"] for l in unknown[:5]))
+        add("links_alive", "All links resolve", WARN, "could not be verified automatically (site blocks automated requests or timed out): " + ", ".join(l["url"] for l in unknown[:5]))
     else:
         add("links_alive", "All links resolve", PASS, f"{len(links)} link(s) OK")
 
@@ -129,12 +138,12 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
         if archived:
             add("code_archived", "Code archived with DOI", PASS, ", ".join(l["url"] for l in archived[:3]))
         else:
-            add("code_archived", "Code archived with DOI", WARN, "only bare git-host links (no Zenodo/SWH snapshot)")
+            add("code_archived", "Code archived with DOI", WARN, "code is linked only on a git host; no archived snapshot with a DOI (e.g. Zenodo, Software Heritage) was found")
         gits = [l for l in code_links if l["repo_type"] in ("github", "gitlab") and l["alive"]]
         lic = [l for l in code_links + archived if l.get("license")]
         if gits or archived:
             add("code_license", "Code has a license", PASS if lic else FAIL,
-                ", ".join(sorted({str(l["license"]) for l in lic})) or "no license detected")
+                ", ".join(sorted({str(l["license"]) for l in lic})) or "no license found on the linked repository or archive")
         pinned = [l for l in code_links + archived if l.get("pinned_ref") or l.get("releases_before_pub") or l["archived_doi"]]
         drift = [l for l in gits if l.get("commits_after_pub")]
         if pinned:
@@ -142,7 +151,7 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
                 "; ".join(f'{l["url"]}: {l.get("pinned_ref") or ", ".join(l.get("releases_before_pub") or []) or "archived"}' for l in pinned[:3]))
         else:
             add("version_pinned", "Version/tag matching paper", WARN,
-                "no tag/release/commit tied to paper" + ("; repo changed after publication" if drift else ""))
+                "no release, tag or commit identifying the version used in the paper" + ("; the repository has changed since publication" if drift else ""))
     else:
         add("code_archived", "Code archived with DOI", NA, "")
 
@@ -151,8 +160,8 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
         if not ok:
             add("repo_checks", "Repo light checks", FAIL, "; ".join(r.get("error", "") for r in repos))
         else:
-            fails = [f'{r["url"].split("/")[-1]}:{c["id"]}' for r in ok for c in r["checks"] if not c["passed"]]
-            add("repo_checks", "Repo light checks", PASS if not fails else WARN, ("missing " + ", ".join(fails)) if fails else "deps, README run steps, entry point, license")
+            fails = [f'{r["url"].split("/")[-1]}: {CHECK_NAMES.get(c["id"], c["id"])}' for r in ok for c in r["checks"] if not c["passed"]]
+            add("repo_checks", "Repo light checks", PASS if not fails else WARN, ("not found: " + ", ".join(fails)) if fails else "dependency file, README run steps, entry point and license present")
 
     data_req = [st for st in data_st if ON_REQUEST.search(st["text"])]
     # "All data and scripts ... are available at <github/swh>" => data deposited with the code
@@ -171,12 +180,12 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
             ("data shipped with archived code: " if arch else "data only in a git repository (no DOI archive): ")
             + ", ".join(l["url"] for l in (arch or data_in_code)[:3]))
     elif ex["data_in_paper"]:
-        add("data_deposited", "Data deposited", WARN, "data said to be in paper/supplement only")
+        add("data_deposited", "Data deposited", WARN, "data are stated to be in the paper/supplement only; no repository deposit found")
     elif ex["generated_data_terms"]:
         add("data_deposited", "Data deposited", FAIL if ex.get("generated_data_verbs") else WARN,
-            "methods mention " + ", ".join(ex["generated_data_terms"][:4]) + " but no repository/accession found")
+            "methods mention " + ", ".join(ex["generated_data_terms"][:4]) + " but no repository link or accession number was found")
     else:
-        add("data_deposited", "Data deposited", WARN, "no data repository link or accession found")
+        add("data_deposited", "Data deposited", WARN, "no data repository link or accession number found")
     return items
 
 
