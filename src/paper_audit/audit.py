@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, asdict
 from typing import List, Optional
 
@@ -154,6 +155,9 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
             add("repo_checks", "Repo light checks", PASS if not fails else WARN, ("missing " + ", ".join(fails)) if fails else "deps, README run steps, entry point, license")
 
     data_req = [st for st in data_st if ON_REQUEST.search(st["text"])]
+    # "All data and scripts ... are available at <github/swh>" => data deposited with the code
+    data_in_code = [l for l in code_links if l.get("stmt_kind") in ("data", "both")
+                    and any(re.search(r"\bdata\b", st["text"], re.I) and l["url"] in st["text"] for st in data_st)]
     if data_req and not data_links and not ex["accessions"]:
         add("data_deposited", "Data deposited", FAIL, "data only 'available on request'")
     elif ex["no_data"] and not data_links:
@@ -161,6 +165,11 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
     elif data_links or ex["accessions"]:
         add("data_deposited", "Data deposited", PASS,
             ", ".join([l["url"] for l in data_links[:3]] + [a["id"] for a in ex["accessions"][:3]]))
+    elif data_in_code:
+        arch = [l for l in data_in_code if l["archived_doi"] or l["repo_type"] == "swh"]
+        add("data_deposited", "Data deposited", PASS if arch else WARN,
+            ("data shipped with archived code: " if arch else "data only in a git repository (no DOI archive): ")
+            + ", ".join(l["url"] for l in (arch or data_in_code)[:3]))
     elif ex["data_in_paper"]:
         add("data_deposited", "Data deposited", WARN, "data said to be in paper/supplement only")
     elif ex["generated_data_terms"]:
@@ -184,10 +193,9 @@ def audit(inp: str, clone: bool = True, paper: Optional[Paper] = None, log=lambd
     log(f"text: {p.text_source}")
     ex = extract(p.text, p.full_text, p.pdf_links, p.doi)
     candidates = sorted(ex.links, key=lambda l: (not l.in_statement, l.kind not in ("code", "archive", "data")))
-    links = []
-    for l in candidates[:MAX_LINKS]:
-        log(f"resolve {l.url}")
-        links.append(resolve_link(l, p.published).to_dict())
+    log(f"resolving {min(len(candidates), MAX_LINKS)} link(s)")
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        links = [r.to_dict() for r in pool.map(lambda l: resolve_link(l, p.published), candidates[:MAX_LINKS])]
     mark_third_party(links)
     # dedupe repos that were linked via several URLs
     repos, seen = [], set()

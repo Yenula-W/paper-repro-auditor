@@ -1,0 +1,6 @@
+id,data_statement,code_statement,not_on_request,code_link,links_alive,code_archived,data_deposited,notes
+10.7554/elife.66273,PASS,PASS,PASS,PASS,PASS,PASS,PASS,"data + scripts on GitHub with Software Heritage snapshot"
+10.1002/ece3.5856,PASS,FAIL,PASS,FAIL,PASS,N/A,PASS,"Dryad data; analyses in R, no code shared"
+10.1136/bmjopen-2021-053511,PASS,FAIL,FAIL,FAIL,N/A,N/A,FAIL,"data on reasonable request; R analysis, no code"
+10.1371/journal.pcbi.1005834,PASS,PASS,PASS,PASS,PASS,WARN,WARN,"Java code on GitHub, no license/archive; data 'within the paper'"
+10.1038/s41467-022-33265-1,PASS,PASS,PASS,PASS,PASS,PASS,PASS,"code and data on Zenodo"

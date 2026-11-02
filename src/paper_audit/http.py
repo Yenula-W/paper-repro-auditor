@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -20,7 +21,8 @@ BROWSER_UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
-TIMEOUT = 20
+TIMEOUT = 15        # connect/read timeout per socket operation
+MAX_SECONDS = 60    # hard cap on downloading one body
 
 
 @dataclass
@@ -51,7 +53,8 @@ _session = requests.Session()
 
 
 def _key(method: str, url: str, headers: Optional[dict]) -> str:
-    h = hashlib.sha1(f"{method} {url} {sorted((headers or {}).items())}".encode()).hexdigest()[:16]
+    hs = sorted((k, v) for k, v in (headers or {}).items() if k.lower() != "authorization")
+    h = hashlib.sha1(f"{method} {url} {hs}".encode()).hexdigest()[:16]
     return h
 
 
@@ -78,16 +81,15 @@ def _save(d: Path, k: str, req_url: str, r: Resp) -> None:
 
 
 def request(url: str, method: str = "GET", headers: Optional[dict] = None,
-            max_bytes: int = 40_000_000, browser: bool = False) -> Resp:
+            max_bytes: int = 40_000_000, browser: bool = False, retry: bool = True) -> Resp:
     """GET/HEAD a URL with one retry on network errors / 5xx / 429. Never raises for HTTP errors."""
-    import time
     cache = _store_dir("PAPER_AUDIT_CACHE")
     if cache is not None:
         hit = _load(cache, _key(method, url, headers))
         if hit is not None and hit.status != 0:
             return hit
     r = _request(url, method, headers, max_bytes, browser)
-    if r.status == 0 or r.status >= 500 or r.status == 429:
+    if retry and (r.status == 0 or r.status >= 500 or r.status == 429):
         if os.environ.get("PAPER_AUDIT_REPLAY") is None:
             time.sleep(2)
             r = _request(url, method, headers, max_bytes, browser)
@@ -115,10 +117,11 @@ def _request(url: str, method: str = "GET", headers: Optional[dict] = None,
             if method != "HEAD":
                 chunks = []
                 size = 0
+                t0 = time.monotonic()
                 for c in resp.iter_content(65536):
                     chunks.append(c)
                     size += len(c)
-                    if size > max_bytes:
+                    if size > max_bytes or time.monotonic() - t0 > MAX_SECONDS:
                         break
                 body = b"".join(chunks)
             r = Resp(resp.url, resp.status_code, body, resp.headers.get("content-type", ""))

@@ -68,7 +68,7 @@ def _alive(url: str, r: http.Resp) -> Optional[bool]:
 
 
 def check_http(res: LinkResult) -> None:
-    r = http.request(res.url, browser=True, max_bytes=200_000)
+    r = http.request(res.url, browser=True, max_bytes=200_000, retry=False)
     res.status, res.final_url = r.status, r.url
     res.alive = _alive(res.url, r)
     if r.status == 0:
