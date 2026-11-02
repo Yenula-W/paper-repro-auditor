@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "paper-repro-auditor"
+version = "0.1.0"
+description = "Audit whether a publication links everything needed to reproduce its computational results."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["requests>=2.25", "pypdf>=3.0"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+paper-audit = "paper_audit.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
