@@ -40,9 +40,20 @@ class Paper:
     warnings: List[str] = field(default_factory=list)
 
 
-def classify_input(s: str) -> tuple[str, str]:
-    s = s.strip()
-    if s.lower().endswith(".pdf") and (Path(s).exists() or s.startswith("http")):
+def _is_file(s: str) -> bool:
+    try:
+        return Path(s).is_file()
+    except (OSError, ValueError):   # symlink loops, NUL bytes, over-long names
+        return False
+
+
+def classify_input(s: str) -> tuple:
+    s = (s or "").strip()
+    if not s:
+        raise ValueError("empty input: give a DOI, arXiv id or PDF path")
+    if s.lower().startswith("http") and s.lower().split("?")[0].endswith(".pdf"):
+        return "pdf", s
+    if _is_file(s):
         return "pdf", s
     m = re.search(r"10\.48550/arxiv\.(.+)$", s, re.I)
     if m:
@@ -55,8 +66,12 @@ def classify_input(s: str) -> tuple[str, str]:
     m = DOI_RE.search(s)
     if m:
         return "doi", m.group(1).rstrip(".,;)").lower()
-    if Path(s).exists():
-        return "pdf", s
+    try:
+        exists = Path(s).exists() or Path(s).is_symlink()
+    except (OSError, ValueError):
+        exists = True
+    if exists:
+        raise ValueError(f"not a readable PDF file: {s!r}")
     raise ValueError(f"cannot recognise input as DOI, arXiv id or PDF: {s!r}")
 
 
@@ -80,6 +95,15 @@ def pdf_to_text(data: bytes) -> tuple[str, List[str]]:
         except Exception:  # noqa: BLE001
             pass
     return "\n".join(pages), list(dict.fromkeys(links))
+
+
+def safe_pdf_to_text(data: bytes) -> tuple:
+    """pdf_to_text that never raises: returns ('', [], error_message) on unparsable input."""
+    try:
+        text, links = pdf_to_text(data)
+        return text, links, ""
+    except Exception as e:  # noqa: BLE001 - pypdf raises many types on corrupt files
+        return "", [], f"PDF could not be parsed ({type(e).__name__})"
 
 
 REF_HEAD = re.compile(r"^\s*(references|bibliography|references and notes|literature cited)\s*$",
@@ -135,10 +159,15 @@ def jats_to_text(xml: str) -> tuple[str, str, List[str]]:
 
     body_parts: List[str] = []
     full_parts: List[str] = []
-    walk(root, full_parts, skip_refs=False)
-    links_full = list(links)
-    links.clear()
-    walk(root, body_parts, skip_refs=True)
+    try:
+        walk(root, full_parts, skip_refs=False)
+        links_full = list(links)
+        links.clear()
+        walk(root, body_parts, skip_refs=True)
+    except RecursionError:   # pathologically nested XML: flat text, no section structure
+        flat = " ".join(root.itertext())
+        hrefs = [e.get(XLINK) for e in root.iter() if e.get(XLINK)]
+        return flat, flat, list(dict.fromkeys(hrefs))
     norm = lambda s: re.sub(r"[ \t]+", " ", re.sub(r"\n{3,}", "\n\n", s))  # noqa: E731
     return norm("".join(body_parts)), norm("".join(full_parts)), list(dict.fromkeys(links_full))
 
@@ -151,12 +180,13 @@ def crossref_meta(doi: str) -> dict:
         return {}
     m = j.get("message", {})
     parts = (m.get("published") or m.get("published-online") or m.get("issued") or {}).get("date-parts") or [[]]
-    date = "-".join(f"{x:02d}" if i else str(x) for i, x in enumerate(parts[0])) if parts[0] else ""
+    nums = [x for x in (parts[0] or []) if isinstance(x, int)]
+    date = "-".join(f"{x:02d}" if i else str(x) for i, x in enumerate(nums))
     return {
-        "title": (m.get("title") or [""])[0],
-        "journal": (m.get("container-title") or [""])[0],
+        "title": (m.get("title") or [""])[0] or "",
+        "journal": (m.get("container-title") or [""])[0] or "",
         "published": date,
-        "links": [l.get("URL") for l in m.get("link", []) if l.get("URL")],
+        "links": [l.get("URL") for l in (m.get("link") or []) if isinstance(l, dict) and l.get("URL")],
     }
 
 
@@ -199,12 +229,16 @@ def _fetch_pdf(url: str) -> Optional[bytes]:
     return None
 
 
-def _use_pdf(p: Paper, data: bytes, source: str) -> None:
-    text, links = pdf_to_text(data)
+def _use_pdf(p: Paper, data: bytes, source: str) -> bool:
+    text, links, err = safe_pdf_to_text(data)
+    if err or not text.strip():
+        p.warnings.append(err or "PDF contains no extractable text (scanned image?)")
+        return False
     p.full_text = text
     p.text = strip_references(text)
     p.pdf_links = links
     p.text_source = source
+    return True
 
 
 def load_paper(inp: str) -> Paper:
@@ -218,8 +252,14 @@ def load_paper(inp: str) -> Paper:
                 p.warnings.append("could not download PDF")
                 return p
         else:
-            data = Path(ident).read_bytes()
-        _use_pdf(p, data, f"pdf:{ident}")
+            try:
+                data = Path(ident).read_bytes()
+            except PermissionError:
+                raise ValueError(f"permission denied reading {ident!r}") from None
+            except OSError as e:
+                raise ValueError(f"cannot read {ident!r}: {e.strerror or e}") from None
+        if not _use_pdf(p, data, f"pdf:{ident}"):
+            return p
         m = DOI_RE.search(p.full_text[:5000])
         if m:
             p.doi = m.group(1).rstrip(".,;)").lower()
@@ -280,8 +320,7 @@ def load_paper(inp: str) -> Paper:
     cands += [l for l in meta.get("links", []) if "pdf" in l.lower()]
     for url in dict.fromkeys(cands):
         data = _fetch_pdf(url)
-        if data:
-            _use_pdf(p, data, f"pdf:{url}")
+        if data and _use_pdf(p, data, f"pdf:{url}"):
             return p
     p.warnings.append("no open-access full text retrievable (tried Europe PMC, OpenAlex/Unpaywall PDFs)")
     return p

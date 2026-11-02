@@ -14,7 +14,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-import requests
+import warnings
+
+warnings.filterwarnings("ignore", message=".*urllib3 v2 only supports OpenSSL.*")  # macOS system Python 3.9
+import requests  # noqa: E402
 
 UA = "paper-repro-auditor/0.1 (+https://github.com/; reproducibility audit; mailto:none)"
 BROWSER_UA = (

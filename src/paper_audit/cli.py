@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -16,22 +17,42 @@ def _slug(s: str) -> str:
     return re.sub(r"[^\w.-]+", "_", s).strip("_")[:80]
 
 
+def _decode(raw: bytes) -> str:
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return raw.decode("utf-16", errors="replace")
+    return raw.decode("utf-8-sig", errors="replace")
+
+
 def _read_inputs(path: str) -> list:
-    rows = []
-    with open(path, newline="") as f:
-        sample = f.read(2048)
-        f.seek(0)
-        has_header = bool(re.search(r"(?i)\b(doi|id|input|paper|arxiv|pdf)\b", sample.splitlines()[0] if sample else ""))
-        reader = csv.reader(f)
-        if has_header:
-            header = [h.strip().lower() for h in next(reader)]
-            col = next((i for i, h in enumerate(header) if h in ("doi", "input", "id", "paper", "arxiv", "pdf")), 0)
-        else:
-            col = 0
-        for row in reader:
-            if row and row[col].strip() and not row[col].startswith("#"):
-                rows.append(row[col].strip())
-    return rows
+    """One input per row: column named doi/input/id/paper/arxiv/pdf, else the first column."""
+    try:
+        raw = Path(path).read_bytes()
+    except OSError as e:
+        raise ValueError(f"cannot read batch file {path!r}: {e.strerror or e}") from None
+    text = _decode(raw).replace("\x00", "")
+    lines = text.splitlines()
+    if not lines:
+        return []
+    rows = list(csv.reader(lines))
+    header = [h.strip().lower() for h in rows[0]] if rows and rows[0] else []
+    names = ("doi", "input", "id", "paper", "arxiv", "pdf")
+    if any(h in names for h in header):
+        col = next(i for i, h in enumerate(header) if h in names)
+        rows = rows[1:]
+    else:
+        col = 0
+    out = []
+    for row in rows:
+        if len(row) > col:
+            v = row[col].strip()
+            if v and not v.startswith("#"):
+                out.append(v)
+    return out
+
+
+def _fail(msg: str) -> int:
+    print(f"error: {msg}", file=sys.stderr)
+    return 2
 
 
 def main(argv=None) -> int:
@@ -44,14 +65,24 @@ def main(argv=None) -> int:
     ap.add_argument("--json", action="store_true", help="print JSON to stdout instead of Markdown")
     ap.add_argument("-q", "--quiet", action="store_true")
     a = ap.parse_args(argv)
-    if not a.input and not a.batch:
+    if a.input is None and not a.batch:
         ap.error("give an INPUT or --batch CSV")
     log = (lambda *_: None) if a.quiet else (lambda m: print(f"  · {m}", file=sys.stderr))
     out = Path(a.out)
-    out.mkdir(parents=True, exist_ok=True)
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        return _fail(f"cannot create output directory {str(out)!r}: {e.strerror or e}")
 
-    if a.input:
-        r = audit(a.input, clone=not a.no_clone, log=log)
+    if a.input is not None and a.batch is None:
+        try:
+            r = audit(a.input, clone=not a.no_clone, log=log)
+        except ValueError as e:
+            return _fail(str(e))
+        except Exception as e:  # noqa: BLE001 - never show a traceback to end users
+            if os.environ.get("PAPER_AUDIT_DEBUG"):
+                raise
+            return _fail(f"audit failed ({type(e).__name__}: {e}). Set PAPER_AUDIT_DEBUG=1 for details.")
         base = out / _slug(r["paper"].get("doi") or r["paper"].get("arxiv_id") or Path(a.input).stem)
         md = to_markdown(r)
         Path(f"{base}.json").write_text(json.dumps(r, indent=2))
@@ -60,7 +91,12 @@ def main(argv=None) -> int:
         print(f"wrote {base}.md / .json", file=sys.stderr)
         return 0
 
-    inputs = _read_inputs(a.batch)
+    try:
+        inputs = _read_inputs(a.batch)
+    except ValueError as e:
+        return _fail(str(e))
+    if not inputs:
+        print("warning: batch file contains no inputs", file=sys.stderr)
     results = []
     for n, inp in enumerate(inputs, 1):
         print(f"[{n}/{len(inputs)}] {inp}", file=sys.stderr)
