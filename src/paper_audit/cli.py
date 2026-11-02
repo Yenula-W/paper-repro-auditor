@@ -54,8 +54,8 @@ def main(argv=None) -> int:
         r = audit(a.input, clone=not a.no_clone, log=log)
         base = out / _slug(r["paper"].get("doi") or r["paper"].get("arxiv_id") or Path(a.input).stem)
         md = to_markdown(r)
-        base.with_suffix(".json").write_text(json.dumps(r, indent=2))
-        base.with_suffix(".md").write_text(md)
+        Path(f"{base}.json").write_text(json.dumps(r, indent=2))
+        Path(f"{base}.md").write_text(md)
         print(json.dumps(r, indent=2) if a.json else md)
         print(f"wrote {base}.md / .json", file=sys.stderr)
         return 0
@@ -71,8 +71,8 @@ def main(argv=None) -> int:
             results.append(r)
             continue
         base = out / _slug(r["paper"].get("doi") or r["paper"].get("arxiv_id") or inp)
-        base.with_suffix(".json").write_text(json.dumps(r, indent=2))
-        base.with_suffix(".md").write_text(to_markdown(r))
+        Path(f"{base}.json").write_text(json.dumps(r, indent=2))
+        Path(f"{base}.md").write_text(to_markdown(r))
         results.append(r)
     with open(out / "summary.csv", "w", newline="") as f:
         w = csv.writer(f)

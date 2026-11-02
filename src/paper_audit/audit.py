@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 from dataclasses import dataclass, asdict
 from typing import List, Optional
 
 from . import __version__
-from .extract import extract
+from .extract import ON_REQUEST, extract
 from .repocheck import check_repo
 from .resolve import resolve_link
 from .sources import Paper, load_paper
@@ -14,7 +15,11 @@ from .sources import Paper, load_paper
 PASS, WARN, FAIL, NA = "PASS", "WARN", "FAIL", "N/A"
 CODE_TYPES = {"github", "gitlab", "bitbucket", "codeocean", "swh", "sourceforge", "pypi", "cran", "bioconductor"}
 MAX_LINKS = 30
-MAX_CLONES = 3
+MAX_CLONES = 2
+REGISTRY_TYPES = {"pypi", "cran", "bioconductor"}
+# "TensorFlow v.1 (url)", "WRF v3.9.1.1 source code ... here: url", "developed with X (url)"
+TOOL_CUE = re.compile(r"(?:\bv\.?\s?\d[\w.]*|version\s+\d[\w.]*|developed\s+(?:with|using)|"
+                      r"implemented\s+(?:in|with|using)|built\s+(?:with|on))\b[^()\n]{0,50}\(?\s*$", re.I)
 
 
 @dataclass
@@ -26,11 +31,32 @@ class Item:
 
 
 def _is_code(l: dict) -> bool:
-    return l["repo_type"] in CODE_TYPES or l["kind"] == "code"
+    if l.get("third_party"):
+        return False
+    return (l["repo_type"] in CODE_TYPES or l["kind"] == "code"
+            or (l["kind"] == "archive" and l.get("stmt_kind") == "code"))  # archive of unknown type
 
 
 def _is_data(l: dict) -> bool:
-    return not _is_code(l) and (l["kind"] in ("data", "archive") or (l["in_statement"] and l["kind"] == "doi"))
+    return not _is_code(l) and not l.get("third_party") and (
+        l["kind"] in ("data", "archive") or (l["in_statement"] and l["kind"] == "doi"))
+
+
+def mark_third_party(links: List[dict]) -> None:
+    """Heuristically flag links to cited tools/dependencies (not the paper's own code)."""
+    first_own = True
+    for l in links:
+        if l["repo_type"] not in CODE_TYPES:
+            continue
+        cue = bool(TOOL_CUE.search(l.get("pre") or ""))
+        if l["repo_type"] in REGISTRY_TYPES and not l["in_statement"]:
+            l["third_party"] = True
+        elif cue:
+            l["third_party"] = True
+        elif not first_own and (l.get("stars") or 0) >= 5000:
+            l["third_party"] = True
+        if not l.get("third_party"):
+            first_own = False
 
 
 def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict]) -> List[Item]:
@@ -46,6 +72,8 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
     code_st = [s for s in stmts if s["kind"] in ("code", "both")]
     computational = ex["computational_hits"] >= 3
     code_links = [l for l in links if _is_code(l)]
+    cited = [l for l in links if l.get("third_party")]
+    code_req = [s for s in code_st if ON_REQUEST.search(s["text"])]
     data_links = [l for l in links if _is_data(l)]
     code_in_stmt = [l for l in code_links if l["in_statement"]]
 
@@ -72,11 +100,17 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
         add("not_future", "No 'will be made available'", FAIL, ex["future_release"][0][:200])
 
     alive_code = [l for l in code_links if l["alive"] is not False]
+    cited_note = f" ({len(cited)} cited third-party tool link(s) ignored)" if cited else ""
     if code_links:
         add("code_link", "Code link present", PASS if alive_code else FAIL,
             ", ".join(l["url"] for l in code_links[:4]))
+    elif code_req:
+        add("code_link", "Code link present", FAIL, "code only 'available on request'" + cited_note)
+    elif code_st:
+        add("code_link", "Code link present", WARN,
+            "code statement gives no source repository (web service / description only)" + cited_note)
     else:
-        add("code_link", "Code link present", FAIL if computational else NA, "no code repository link")
+        add("code_link", "Code link present", FAIL if computational else NA, "no code repository link" + cited_note)
 
     dead = [l for l in links if l["alive"] is False]
     unknown = [l for l in links if l["alive"] is None]
@@ -89,8 +123,8 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
     else:
         add("links_alive", "All links resolve", PASS, f"{len(links)} link(s) OK")
 
-    if code_links or any(l["repo_type"] == "zenodo" and l["kind"] == "code" for l in links):
-        archived = [l for l in links if l["archived_doi"] and (l["kind"] in ("code", "archive") or l.get("linked_github"))]
+    if code_links:
+        archived = [l for l in code_links if l["archived_doi"] or l.get("linked_github")]
         if archived:
             add("code_archived", "Code archived with DOI", PASS, ", ".join(l["url"] for l in archived[:3]))
         else:
@@ -119,7 +153,10 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
             fails = [f'{r["url"].split("/")[-1]}:{c["id"]}' for r in ok for c in r["checks"] if not c["passed"]]
             add("repo_checks", "Repo light checks", PASS if not fails else WARN, ("missing " + ", ".join(fails)) if fails else "deps, README run steps, entry point, license")
 
-    if ex["no_data"] and not data_links:
+    data_req = [st for st in data_st if ON_REQUEST.search(st["text"])]
+    if data_req and not data_links and not ex["accessions"]:
+        add("data_deposited", "Data deposited", FAIL, "data only 'available on request'")
+    elif ex["no_data"] and not data_links:
         add("data_deposited", "Data deposited", NA, ex["no_data"][0][:200])
     elif data_links or ex["accessions"]:
         add("data_deposited", "Data deposited", PASS,
@@ -127,7 +164,7 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
     elif ex["data_in_paper"]:
         add("data_deposited", "Data deposited", WARN, "data said to be in paper/supplement only")
     elif ex["generated_data_terms"]:
-        add("data_deposited", "Data deposited", FAIL,
+        add("data_deposited", "Data deposited", FAIL if ex.get("generated_data_verbs") else WARN,
             "methods mention " + ", ".join(ex["generated_data_terms"][:4]) + " but no repository/accession found")
     else:
         add("data_deposited", "Data deposited", WARN, "no data repository link or accession found")
@@ -151,11 +188,13 @@ def audit(inp: str, clone: bool = True, paper: Optional[Paper] = None, log=lambd
     for l in candidates[:MAX_LINKS]:
         log(f"resolve {l.url}")
         links.append(resolve_link(l, p.published).to_dict())
+    mark_third_party(links)
     # dedupe repos that were linked via several URLs
     repos, seen = [], set()
     if clone:
         for l in links:
-            if l.get("clone_url") and l["alive"] and l["repo"] not in seen and len(repos) < MAX_CLONES:
+            if (l.get("clone_url") and l["alive"] and not l.get("third_party")
+                    and l["repo"] not in seen and len(repos) < MAX_CLONES):
                 seen.add(l["repo"])
                 log(f"clone {l['clone_url']}")
                 r = check_repo(l["clone_url"], l.get("pinned_ref"))

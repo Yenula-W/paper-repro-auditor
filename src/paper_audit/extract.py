@@ -22,6 +22,8 @@ HEADINGS = [
     (r"resource\s+availability", "both"),
     (r"data,?\s+materials,?\s+and\s+software\s+availability", "both"),
     (r"open\s+(?:research|data)\s+statement", "data"),
+    (r"data\s+records", "data"),
+    (r"lead\s+contact\s+and\s+materials\s+availability", "both"),
 ]
 STOP = re.compile(
     r"\n\s*(?:##\s*)?(?:references|acknowledg|author\s+contributions?|competing\s+interests?|"
@@ -41,6 +43,7 @@ class Statement:
 
 
 def find_statements(text: str, max_len: int = 1500) -> List[Statement]:
+    structured = "\n## " in text   # JATS-derived text keeps section titles as '## '
     out: List[Statement] = []
     seen_spans = []
     for pat, kind in HEADINGS:
@@ -55,8 +58,10 @@ def find_statements(text: str, max_len: int = 1500) -> List[Statement]:
             s = STOP.search(body, 20)
             if s:
                 body = body[: s.start()]
-            # PDFs: a blank line usually ends the statement
-            para = re.split(r"\n\s*\n(?!\s*(?:<|https?://))", body, 1)[0] if "\n\n" in body[40:] else body
+            if structured:
+                para = body.split("\n## ", 1)[0]
+            else:  # PDFs: a blank line usually ends the statement
+                para = re.split(r"\n\s*\n(?!\s*(?:<|https?://))", body, 1)[0] if "\n\n" in body[40:] else body
             para = " ".join(para.split())
             if len(para) < 15:
                 continue
@@ -126,6 +131,8 @@ class Link:
     repo_type: str          # github | zenodo | ...
     in_statement: bool = False
     context: str = ""
+    stmt_kind: Optional[str] = None   # kind of the availability statement it appeared in
+    pre: str = ""                      # ~60 chars of text before the link (for 'v1.2 (url)' cues)
 
 
 def _clean_url(u: str) -> str:
@@ -173,10 +180,9 @@ def _fix_pdf_breaks(text: str) -> str:
 def find_links(body: str, statements: List[Statement], extra: Optional[List[str]] = None,
                self_doi: Optional[str] = None) -> List[Link]:
     """Links worth auditing: everything in statements, plus repository-type links in the body."""
-    stmt_text = "\n".join(s.text for s in statements)
     found: dict = {}
 
-    def add(url: str, in_stmt: bool, ctx: str):
+    def add(url: str, in_stmt, ctx: str, pre: str = ""):
         url = _clean_url(url)
         if len(url) < 12:
             return
@@ -187,26 +193,32 @@ def find_links(body: str, statements: List[Statement], extra: Optional[List[str]
         if key.endswith((".pdf",)) and kind == "other":
             return
         if key in found:
-            found[key].in_statement |= in_stmt
+            if in_stmt and not found[key].in_statement:
+                found[key].in_statement, found[key].stmt_kind = True, in_stmt
+                found[key].pre = pre
             return
-        found[key] = Link(url, host, kind, rt, in_stmt, ctx)
+        found[key] = Link(url, host, kind, rt, bool(in_stmt), ctx, in_stmt or None, pre)
 
-    for src, in_stmt in ((stmt_text, True), (_fix_pdf_breaks(body), False)):
+    srcs = [(s.text, s.kind) for s in statements] + [(_fix_pdf_breaks(body), None)]
+    for src, in_stmt in srcs:
+        hits = []
         for m in URL_RE.finditer(src):
             host, kind, _ = classify_url(_clean_url(m.group(0)))
             if in_stmt or kind != "other" and kind != "doi":
-                add(m.group(0), in_stmt, _context(src, m.start(), m.end()))
+                hits.append((m.start(), m.end(), m.group(0)))
         for m in BARE_HOST_RE.finditer(src):
-            add("https://" + m.group(1), in_stmt, _context(src, m.start(), m.end()))
+            hits.append((m.start(), m.end(), "https://" + m.group(1)))
         for m in DOI_TXT_RE.finditer(src):
             doi = _clean_url(m.group(1))
-            pref = doi.split("/")[0]
-            if in_stmt or pref in REPO_DOI_PREFIX:
-                add("https://doi.org/" + doi, in_stmt, _context(src, m.start(), m.end()))
+            if in_stmt or doi.split("/")[0] in REPO_DOI_PREFIX:
+                hits.append((m.start(), m.end(), "https://doi.org/" + doi))
+        for i, j, u in sorted(hits):   # keep reading order
+            add(u, in_stmt, _context(src, i, j), " ".join(src[max(0, i - 60):i].split()))
+    stmt_text = "\n".join(s.text for s in statements)
     for u in extra or []:
         host, kind, _ = classify_url(_clean_url(u))
         if kind not in ("other", "doi"):
-            add(u, _clean_url(u) in stmt_text, "")
+            add(u, None, "")
     # Collapse URLs that are doi.org/X duplicates of https://doi.org/X variants
     return list(found.values())
 
@@ -242,7 +254,9 @@ COMPUTATIONAL = re.compile(
     r"\b(?:python|matlab|r\s+package|rstudio|r\s+version|scikit-learn|pytorch|tensorflow|"
     r"custom\s+(?:code|script|software)|scripts?\s+(?:used|written)|we\s+(?:implemented|trained)|"
     r"simulations?|machine\s+learning|deep\s+learning|neural\s+network|github|source\s+code|"
-    r"bioinformatic|pipeline|algorithm|numerical(?:ly)?|monte\s+carlo|regression\s+model)\b",
+    r"bioinformatic|pipeline|algorithm|numerical(?:ly)?|monte\s+carlo|regression\s+model|"
+    r"R\s+Core\s+Team|lme4|GLMMs?|mixed[- ]effects?\s+models?|generali[sz]ed\s+linear|"
+    r"GPU|convolutional|stochastic\s+gradient|train(?:ed|ing)\s+(?:on|with|set|data))\w*\b",
     re.I)
 GENERATED_DATA = re.compile(
     r"\b(?:rna-?seq|scrna-?seq|single-cell\s+rna|whole[- ]genome\s+sequencing|exome\s+sequencing|"
@@ -251,6 +265,10 @@ GENERATED_DATA = re.compile(
     r"we\s+(?:collected|recorded|generated|acquired|surveyed|measured)|"
     r"participants\s+were\s+recruited|questionnaire|field\s+(?:data|survey|sampling))\b",
     re.I)
+
+
+GEN_VERBS = re.compile(r"\bwe\s+(?:collected|recorded|generated|acquired|sequenced|surveyed|measured|"
+                       r"recruited|interviewed|sampled)\b|participants\s+were\s+recruited", re.I)
 
 
 def find_phrases(rx: re.Pattern, text: str, limit: int = 5) -> List[str]:
@@ -268,6 +286,7 @@ class Extraction:
     no_data: List[str] = field(default_factory=list)
     computational_hits: int = 0
     generated_data_terms: List[str] = field(default_factory=list)
+    generated_data_verbs: List[str] = field(default_factory=list)   # "we collected/sequenced/..."
 
     def to_dict(self):
         return asdict(self)
@@ -289,4 +308,5 @@ def extract(body: str, full: str, extra_links=None, self_doi=None) -> Extraction
         no_data=find_phrases(NO_DATA, stmt_text),
         computational_hits=len(COMPUTATIONAL.findall(body)),
         generated_data_terms=gen,
+        generated_data_verbs=find_phrases(GEN_VERBS, body, 3),
     )

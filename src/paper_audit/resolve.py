@@ -29,10 +29,24 @@ class LinkResult:
     commits_after_pub: Optional[bool] = None
     archived_repo: Optional[bool] = None   # GitHub "archived" (read-only) flag
     linked_github: Optional[str] = None    # e.g. Zenodo record that mirrors a GitHub release
+    stmt_kind: Optional[str] = None
+    pre: str = ""
+    stars: Optional[int] = None
+    size_kb: Optional[int] = None
+    third_party: bool = False              # cited tool/dependency rather than the paper's own code
     notes: List[str] = field(default_factory=list)
 
     def to_dict(self):
         return asdict(self)
+
+
+def _plus_days(date: str, days: int) -> str:
+    import datetime as dt
+    try:
+        d = dt.date.fromisoformat(date[:10]) if len(date) >= 10 else dt.date(int(date[:4]), 12, 31)
+    except ValueError:
+        return date
+    return (d + dt.timedelta(days=days)).isoformat()
 
 
 def _gh_headers() -> dict:
@@ -46,8 +60,10 @@ def _gh_headers() -> dict:
 def _alive(url: str, r: http.Resp) -> Optional[bool]:
     if r.ok or 300 <= r.status < 400:
         return True
-    if r.status in (401, 403, 429, 999) or r.status == 0 and "Timeout" in r.error:
+    if r.status in (401, 403, 429, 999):
         return None
+    if r.status == 0:   # DNS failure => dead host; timeouts/TLS/etc => unknown
+        return False if re.search(r"NameResolution|Failed to resolve|nodename", r.error) else None
     return False
 
 
@@ -94,10 +110,13 @@ def check_github(res: LinkResult, published: str) -> None:
     if res.license == "NOASSERTION":
         res.notes.append("license file present but not recognised by GitHub")
     res.archived_repo = j.get("archived")
+    res.stars, res.size_kb = j.get("stargazers_count"), j.get("size")
     if published:
         rel = http.get_json(f"{api}/releases?per_page=100", headers=_gh_headers()) or []
+        # releases up to 30 days after publication still count as "the paper's version"
+        cutoff = _plus_days(published, 30)
         res.releases_before_pub = [x.get("tag_name") for x in rel
-                                   if (x.get("published_at") or "")[:10] <= published[:10]][:10]
+                                   if (x.get("published_at") or "9")[:10] <= cutoff][:10]
         if not rel:
             tags = http.get_json(f"{api}/tags?per_page=100", headers=_gh_headers()) or []
             if tags:
@@ -148,6 +167,23 @@ def check_zenodo(res: LinkResult) -> None:
             break
 
 
+def check_figshare(res: LinkResult) -> None:
+    m = re.search(r"figshare\.(\d+)", res.url) or re.search(r"figshare\.com/articles/(?:[^/]+/)*(\d+)", res.url)
+    j = http.get_json(f"https://api.figshare.com/v2/articles/{m.group(1)}") if m else None
+    if not j:
+        check_http(res)
+        res.archived_doi = res.alive is not False
+        return
+    res.alive, res.status, res.archived_doi = True, 200, True
+    res.license = (j.get("license") or {}).get("name")
+    res.pinned_ref = f"figshare:{m.group(1)} v{j.get('version', '?')}"
+    t = (j.get("defined_type_name") or "").lower()
+    if t == "software":
+        res.kind = "code"
+    elif t in ("dataset", "figure", "media", "fileset", "online resource"):
+        res.kind = "data"
+
+
 def check_doi(res: LinkResult) -> None:
     check_http(res)
     if res.repo_type not in ("doi", "other"):
@@ -163,7 +199,8 @@ def check_doi(res: LinkResult) -> None:
 
 
 def resolve_link(link: Link, published: str = "") -> LinkResult:
-    res = LinkResult(link.url, link.repo_type, link.kind, link.in_statement)
+    res = LinkResult(link.url, link.repo_type, link.kind, link.in_statement,
+                     stmt_kind=link.stmt_kind, pre=link.pre)
     try:
         if link.repo_type == "github":
             check_github(res, published)
@@ -171,6 +208,8 @@ def resolve_link(link: Link, published: str = "") -> LinkResult:
             check_gitlab(res)
         elif link.repo_type == "zenodo":
             check_zenodo(res)
+        elif link.repo_type == "figshare":
+            check_figshare(res)
         elif link.host in ("doi.org", "dx.doi.org"):
             if link.repo_type == "zenodo":
                 check_zenodo(res)

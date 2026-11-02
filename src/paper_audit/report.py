@@ -41,7 +41,7 @@ def to_markdown(r: dict) -> str:
             ver = l.get("pinned_ref") or ", ".join(l.get("releases_before_pub") or [])
             if l.get("commits_after_pub"):
                 ver += " (changed after pub.)"
-            lines.append(f"| {_esc(l['url'])} | {l['repo_type']}/{l['kind']}{' (stmt)' if l['in_statement'] else ''} | "
+            lines.append(f"| {_esc(l['url'])} | {l['repo_type']}/{l['kind']}{' (stmt)' if l['in_statement'] else ''}{' (cited tool)' if l.get('third_party') else ''} | "
                          f"{alive} | {'yes' if l['archived_doi'] else ''} | {l.get('license') or ''} | "
                          f"{_esc(ver)} | {_esc('; '.join(l.get('notes') or []))[:120]} |")
     if ev.get("accessions"):

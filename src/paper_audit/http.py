@@ -2,6 +2,7 @@
 
 PAPER_AUDIT_RECORD=<dir>  save every response under <dir>
 PAPER_AUDIT_REPLAY=<dir>  serve responses only from <dir>; missing => offline error
+PAPER_AUDIT_CACHE=<dir>   read-through cache: serve from <dir> if present, else fetch + save
 """
 from __future__ import annotations
 
@@ -80,11 +81,18 @@ def request(url: str, method: str = "GET", headers: Optional[dict] = None,
             max_bytes: int = 40_000_000, browser: bool = False) -> Resp:
     """GET/HEAD a URL with one retry on network errors / 5xx / 429. Never raises for HTTP errors."""
     import time
+    cache = _store_dir("PAPER_AUDIT_CACHE")
+    if cache is not None:
+        hit = _load(cache, _key(method, url, headers))
+        if hit is not None and hit.status != 0:
+            return hit
     r = _request(url, method, headers, max_bytes, browser)
     if r.status == 0 or r.status >= 500 or r.status == 429:
         if os.environ.get("PAPER_AUDIT_REPLAY") is None:
             time.sleep(2)
             r = _request(url, method, headers, max_bytes, browser)
+    if cache is not None:
+        _save(cache, _key(method, url, headers), url, r)
     return r
 
 

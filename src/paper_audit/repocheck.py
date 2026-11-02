@@ -50,6 +50,15 @@ def _files(root: Path, limit: int = 20000):
 def scan_dir(path) -> dict:
     root = Path(path)
     files = _files(root)
+
+    def read(name):
+        return (root / name).read_text(errors="replace")
+    return scan_tree([str(f) for f in files], read)
+
+
+def scan_tree(file_names, read) -> dict:
+    """Checks over a list of repo-relative paths; `read(name)` returns a file's text."""
+    files = [Path(f) for f in file_names]
     names = {str(f) for f in files}
     lower = {n.lower(): n for n in names}
     checks = []
@@ -58,7 +67,7 @@ def scan_dir(path) -> dict:
     checks.append({"id": "dependency_file", "passed": bool(deps), "detail": ", ".join(sorted(deps)[:5]) or "none found"})
 
     readme_name = next((lower[n] for n in sorted(lower) if re.fullmatch(r"readme(\.\w+)?", n)), None)
-    readme = (root / readme_name).read_text(errors="replace") if readme_name else ""
+    readme = read(readme_name) if readme_name else ""
     checks.append({"id": "readme", "passed": bool(readme_name) and len(readme.strip()) > 200,
                    "detail": f"{readme_name} ({len(readme)} chars)" if readme_name else "no top-level README"})
 
@@ -69,7 +78,8 @@ def scan_dir(path) -> dict:
 
     import fnmatch
     entries = sorted({n for n in names for g in ENTRY_GLOBS if fnmatch.fnmatch(n, g)})
-    referenced = sorted(set(SCRIPT_REF.findall(readme)))
+    no_urls = re.sub(r"\w+://\S+|\$\{?[A-Z_]+\}?/\S+|[A-Z_]{3,}/\S+", " ", readme)
+    referenced = sorted(set(SCRIPT_REF.findall(no_urls)))
     ref_exist = [r for r in referenced if r.lstrip("./") in names or any(n.endswith("/" + r.lstrip("./")) for n in names)]
     ref_missing = [r for r in referenced if r not in ref_exist and not r.startswith("http")]
     checks.append({"id": "entry_point", "passed": bool(entries or ref_exist),
@@ -88,22 +98,33 @@ def scan_dir(path) -> dict:
             "checks": checks}
 
 
+def _git(args, cwd, timeout):
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_LFS_SKIP_SMUDGE="1")
+    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env)
+
+
 def check_repo(clone_url: str, ref: Optional[str] = None, timeout: int = 90) -> dict:
+    """Blobless shallow clone (no checkout): only the file list and README are fetched."""
     with tempfile.TemporaryDirectory(prefix="paper-audit-") as td:
-        cmd = ["git", "clone", "--depth", "1", "--quiet"]
+        cmd = ["clone", "--depth", "1", "--quiet", "--filter=blob:none", "--no-checkout"]
         if ref:
             cmd += ["--branch", ref]
         cmd += [clone_url, td]
-        env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_LFS_SKIP_SMUDGE="1")
         try:
-            p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
+            p = _git(cmd, None, timeout)
             if p.returncode != 0 and ref:   # ref may be a commit sha or odd tag: retry default branch
-                p = subprocess.run(cmd[:4] + [clone_url, td], capture_output=True, text=True,
-                                   timeout=timeout, env=env)
+                cmd = [c for c in cmd if c not in ("--branch", ref)]
+                p = _git(cmd, None, timeout)
+            if p.returncode != 0:
+                return {"error": "clone failed: " + p.stderr.strip()[:300], "checks": []}
+            ls = _git(["ls-tree", "-r", "--name-only", "HEAD"], td, timeout)
+            names = [n for n in ls.stdout.splitlines() if n]
+
+            def read(name):
+                r = _git(["show", f"HEAD:{name}"], td, timeout)
+                return r.stdout if r.returncode == 0 else ""
+            out = scan_tree(names, read)
         except subprocess.TimeoutExpired:
             return {"error": f"clone timed out after {timeout}s", "checks": []}
-        if p.returncode != 0:
-            return {"error": "clone failed: " + p.stderr.strip()[:300], "checks": []}
-        out = scan_dir(td)
         out["clone_url"], out["ref"] = clone_url, ref
         return out
