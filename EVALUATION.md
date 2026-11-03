@@ -27,9 +27,9 @@ Label conventions:
 
 | Round | Commit run | Journals (field) | Judgments | First-run precision | Checks below 80% | Crashes | Overstated |
 |---|---|---|---|---|---|---|---|
-| S1 | `b01912a` | GMD (atmos. modelling), PeerJ CS, Phys Rev Research, A&A, Wellcome Open Res, Glossa (linguistics), BMC Public Health, Front Vet Sci, ACS Omega, Economies | 70 | **83%** | full_text 60%, code_link 67%, data_deposited 50% | 0 | 11 |
-| S2 | `8dedf96` | JOSS, GigaScience, IEEE Access, New J Phys, Ecosphere, PLOS NTD, JMIR, HESS (hydrology), Education Sciences, J R Soc Interface | 80 | **90%** | data_deposited 71% | 0 | 7 |
-| S3 | `9b278ce` | Front Neuroinform, npj Comput Mater, Socius (sociology), Research & Politics, J Stat Softw, BMJ Glob Health, Chem Sci, Evol Hum Sci, ESSD, J Archaeol Sci Rep | 81 | **93%** | data_deposited 71%, not_future 0% (1 judged) | 0 | 5 |
+| S1 | `288d21c` | GMD (atmos. modelling), PeerJ CS, Phys Rev Research, A&A, Wellcome Open Res, Glossa (linguistics), BMC Public Health, Front Vet Sci, ACS Omega, Economies | 70 | **83%** | full_text 60%, code_link 67%, data_deposited 50% | 0 | 11 |
+| S2 | `44c4c6d` | JOSS, GigaScience, IEEE Access, New J Phys, Ecosphere, PLOS NTD, JMIR, HESS (hydrology), Education Sciences, J R Soc Interface | 80 | **90%** | data_deposited 71% | 0 | 7 |
+| S3 | `ba83502` | Front Neuroinform, npj Comput Mater, Socius (sociology), Research & Politics, J Stat Softw, BMJ Glob Health, Chem Sci, Evol Hum Sci, ESSD, J Archaeol Sci Rep | 81 | **93%** | data_deposited 71%, not_future 0% (1 judged) | 0 | 5 |
 
 Per check, first run (correct + debatable / judged):
 
