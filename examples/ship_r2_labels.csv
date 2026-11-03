@@ -1,0 +1,11 @@
+id,full_text,data_statement,code_statement,not_on_request,code_link,links_alive,code_archived,code_license,version_pinned,repo_checks,data_deposited,notes
+10.21105/joss.02673,PASS,FAIL|N/A,PASS,PASS,PASS,PASS,PASS,PASS,PASS,PASS|WARN,N/A|WARN,"JOSS software paper (DrWatson.jl); own repo JuliaDynamics/DrWatson.jl + Zenodo 4133570; figshare 3115156 is a cited CWL reference, not data"
+10.1093/gigascience/giad090,PASS,PASS,N/A|FAIL,PASS,N/A|FAIL,PASS,N/A,N/A,N/A,N/A,PASS,"PRJNA971355 + SRR runs; only third-party assembly tools"
+10.1109/access.2022.3157335,PASS,FAIL,FAIL|N/A,PASS,FAIL|N/A,N/A,N/A,N/A,N/A,N/A,WARN|N/A,"control theory with numerical simulation; no statements"
+10.1088/1367-2630/acca9c,PASS,PASS,FAIL|N/A,PASS,FAIL|N/A,N/A,N/A,N/A,N/A,N/A,WARN,"PDF text 'Dataavailabilitystatement All data ... included within the article'; numerical physics"
+10.1002/ecs2.4093,WARN,,,,,,,,,,,"OA (Wiley pdfdirect) but download blocked; no Europe PMC copy"
+10.1371/journal.pntd.0011747,PASS,PASS,FAIL|N/A,PASS,FAIL|N/A,N/A,N/A,N/A,N/A,N/A,WARN,"data in manuscript/SI; Fisher tests in R 4.2.2"
+10.2196/25855,PASS,FAIL,N/A,PASS,N/A,N/A,N/A,N/A,N/A,N/A,WARN,"JMIR 2022, no availability statement; web-pharmacy survey data"
+10.5194/hess-24-2999-2020,PASS,PASS,PASS,FAIL,FAIL,FAIL,N/A,N/A,N/A,N/A,PASS|WARN,"model code on request; sapfluxnet DB on GitHub wiki is data; ICOS station page 404 (curl)"
+10.3390/educsci11090522,WARN,,,,,,,,,,,"OA (MDPI) but download blocked"
+10.1098/rsif.2020.0799,WARN,,,,,,,,,,,"green OA in PMC (not OA subset) + LSU repository landing pages; no downloadable PDF"

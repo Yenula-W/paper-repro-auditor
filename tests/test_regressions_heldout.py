@@ -453,3 +453,48 @@ def test_code_archive_is_data_only_if_its_sentence_says_data():
     z = _link("https://doi.org/10.5281/zenodo.5507489", in_statement=True, stmt_kind="both", archived_doi=True, kind="code")
     w = _link("https://www.nco.ncep.noaa.gov/pmb/products/gfs/", in_statement=True, stmt_kind="both")
     assert _status(build_checklist({"text_source": "x", "warnings": []}, ex, [z, w], []))["data_deposited"] == "WARN"
+
+
+# ===================== ship-bar round 2 (10 more new journals) =====================
+
+# --- New J Phys 10.1088/1367-2630/acca9c: PDF text lost the spaces ("Dataavailabilitystatement")
+def test_heading_without_spaces():
+    t = "systems.\nDataavailabilitystatement\nAll data that support the findings of this study are included within the article.\n"
+    st = find_statements(t)
+    assert st and st[0].kind == "data"
+    assert extract("body", t).data_in_paper
+
+
+# --- HESS 10.5194/hess-24-2999-2020: URL broken at the PDF line end inside the statement
+#     ("github.com/sapfluxnet/\nsapfluxnet-public/wiki"), the GitHub wiki holds a database (data,
+#     not code), and "Model source code is available upon request" is about code only
+def test_hess_data_on_github_and_code_on_request():
+    full = ("\nCode and data availability. Sapflux data are archived in\nthe sapfluxnet database "
+            "(https://github.com/sapfluxnet/\nsapfluxnet-public/wiki; Poyatos, 2017). Model source code "
+            "is available upon request from Kersti Haahti.\n\nSupplement.")
+    ex = extract("We ran a numerical model simulation of the water balance (Python).", full)
+    urls = {l.url for l in ex.links}
+    assert "https://github.com/sapfluxnet/sapfluxnet-public/wiki" in urls
+    from dataclasses import asdict
+    links = [_link(l.url, pre=l.pre, in_statement=l.in_statement, stmt_kind=l.stmt_kind) for l in ex.links]
+    s = _status(build_checklist({"text_source": "pdf", "warnings": []}, asdict(ex), links, []))
+    assert s["code_link"] == "FAIL" and s["not_on_request"] == "FAIL"
+    assert s["code_archived"] == "N/A" and "code_license" not in s
+    assert s["data_deposited"] == "PASS"
+
+
+# --- JOSS 10.21105/joss.02673: PDF link annotations of the reference list (a figshare DOI of a
+#     cited paper) were counted as data deposits
+def test_pdf_annotation_only_in_references_is_ignored():
+    body = "DrWatson is a Julia package. See the docs."
+    full = body + "\nReferences\nAmstutz P. (2016). Common Workflow Language. doi: 10.6084/m9.figshare.3115156.v2\n"
+    ex = extract(body, full, extra_links=["https://doi.org/10.6084/m9.figshare.3115156.v2",
+                                          "https://zenodo.org/record/4133570"])
+    assert {l.url for l in ex.links} == {"https://zenodo.org/record/4133570"}
+
+
+# --- same paper: "DrWatson: the perfect sidekick ..." owns github.com/JuliaDynamics/DrWatson.jl
+def test_julia_suffix_repo_named_in_title():
+    from paper_audit.audit import _named_in_title
+    assert _named_in_title({"url": "https://github.com/JuliaDynamics/DrWatson.jl"},
+                           "DrWatson: the perfect sidekick for your scientific inquiries")

@@ -40,8 +40,17 @@ class Item:
     detail: str = ""
 
 
+def _data_on_code_host(l: dict) -> bool:
+    """'Sapflux data are archived in the sapfluxnet database (https://github.com/sapfluxnet/...)':
+    a code host used for data, with no word about code in that sentence."""
+    if not (l["in_statement"] and l["repo_type"] in ("github", "gitlab", "bitbucket")):
+        return False
+    sent = sentence_before(l.get("pre") or "")
+    return bool(re.search(r"\bdata(?:sets?|base)?\b", sent, re.I)) and not CODE_WORDS.search(sent)
+
+
 def _is_code(l: dict) -> bool:
-    if l.get("third_party"):
+    if l.get("third_party") or _data_on_code_host(l):
         return False
     if l["kind"] == "web":
         return False
@@ -75,7 +84,13 @@ def _sentence_with(text: str, url: str) -> str:
 
 def _is_data(l: dict) -> bool:
     return not _is_code(l) and not l.get("third_party") and l["kind"] != "web" and (
-        l["kind"] in ("data", "archive") or (l["in_statement"] and l["kind"] == "doi"))
+        l["kind"] in ("data", "archive") or (l["in_statement"] and l["kind"] == "doi") or _data_on_code_host(l))
+
+
+def _code_only_request(snippet: str) -> bool:
+    """'Model source code is available upon request' says nothing about the data."""
+    sent = re.split(r"(?<=[.;])\s+", snippet[:snippet.lower().rfind("request") + 7])[-1]
+    return bool(CODE_WORDS.search(sent)) and not re.search(r"\bdata(?:sets?)?\b", sent, re.I)
 
 
 def _why(l: dict) -> str:
@@ -98,7 +113,9 @@ def _owner(l: dict) -> Optional[str]:
 def _named_in_title(l: dict, title: str) -> bool:
     """Tool papers: 'FLaapLUC: a pipeline ...' links github.com/jlenain/flaapluc."""
     m = re.match(r"https?://[^/]+/[^/]+/([^/#?]+)", l["url"])
-    name = re.sub(r"[^a-z0-9]", "", (m.group(1) if m else "").lower().replace(".git", ""))
+    # "DrWatson: the perfect sidekick ..." owns github.com/JuliaDynamics/DrWatson.jl
+    name = re.sub(r"\.(?:git|jl|py|r|js|rs)$", "", (m.group(1) if m else "").lower())
+    name = re.sub(r"[^a-z0-9]", "", name)
     return len(name) >= 4 and name in re.sub(r"[^a-z0-9]", "", (title or "").lower())
 
 
@@ -281,7 +298,7 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
             fails = [f'{r["url"].split("/")[-1]}: {CHECK_NAMES.get(c["id"], c["id"])}' for r in ok for c in r["checks"] if not c["passed"]]
             add("repo_checks", "Repo light checks", PASS if not fails else WARN, ("not found: " + ", ".join(fails)) if fails else "dependency file, README run steps, entry point and license present")
 
-    data_req = [st for st in data_st if data_code_requests(st["text"])]
+    data_req = [st for st in data_st if any(not _code_only_request(r) for r in data_code_requests(st["text"]))]
     # data-type terms only ("RNA-seq", "questionnaire"); verbs alone ("we measured") prove nothing
     data_terms = [t for t in ex["generated_data_terms"] if not t.startswith("we ") and "participants" not in t]
     # "All data and scripts ... are available at <github/swh>" => data deposited with the code

@@ -53,6 +53,7 @@ def find_statements(text: str, max_len: int = 2500) -> List[Statement]:
     out: List[Statement] = []
     seen_spans = []
     for pat, kind in HEADINGS:
+        pat = pat.replace(r"\s+", r"\s*")   # PDF text can lose the spaces: "Dataavailabilitystatement" (IOP)
         # heading at line start (optionally '## '), followed by ':' / newline / space
         # heading on its own line, or a run-in head after a sentence ("... interests. Data and
         # materials availability: All data ...", as in Science journals) which must end in ':'
@@ -318,7 +319,9 @@ FUTURE = re.compile(r"will\s+be\s+(?:made\s+)?(?:publicly\s+)?(?:available|relea
                     r"|(?:up)?on\s+(?:acceptance|publication)|coming\s+soon", re.I)
 IN_PAPER = re.compile(
     # Frontiers boilerplate: "The original contributions presented in the study are included in the article/Supplementary material"
-    r"(?:(?:all\s+)?(?:relevant\s+)?data|original\s+contributions(?:\s+presented\s+in\s+the\s+study)?)\s+"
+    # IOP: "All data that support the findings of this study are included within the article"
+    r"(?:(?:all\s+)?(?:relevant\s+)?data(?:\s+that\s+supports?\s+the\s+findings\s+of\s+this\s+study)?|"
+    r"original\s+contributions(?:\s+presented\s+in\s+the\s+study)?)\s+"
     r"(?:are|is|were)\s+(?:included|available|provided|contained|presented)\s+"
     r"(?:\w+\s+){0,3}(?:in|within)\s+the\s+(?:paper|article|manuscript|main\s+text|supplement\w*|supporting)",
     re.I)
@@ -388,8 +391,18 @@ class Extraction:
         return asdict(self)
 
 
+def _cited_only(url: str, refs: str, body: str) -> bool:
+    """A PDF link annotation whose target is printed only in the reference list is a citation."""
+    key = re.sub(r"^https?://(?:dx\.)?(?:doi\.org/)?", "", url).lower().rstrip("/")
+    return len(key) > 8 and key in refs.lower() and key not in body.lower()
+
+
 def extract(body: str, full: str, extra_links=None, self_doi=None) -> Extraction:
     full = full or body
+    if extra_links and full.startswith(body):   # PDFs: body = full text minus the reference list
+        refs = full[len(body):]
+        extra_links = [u for u in extra_links if not _cited_only(u, refs, body)]
+    full = _fix_pdf_breaks(full)   # statements need re-joined URLs too ("github.com/x/\nrepo")
     stmts = find_statements(full)
     stmt_text = "\n".join(s.text for s in stmts)
     scope = stmt_text + "\n" + body
