@@ -23,6 +23,9 @@ HEADINGS = [
     (r"data,?\s+materials,?\s+and\s+software\s+availability", "both"),
     (r"open\s+(?:research|data)\s+statement", "data"),
     (r"data\s+records", "data"),
+    (r"data,?\s+(?:and\s+)?materials\s+availability", "both"),   # Science family
+    (r"availability\s+and\s+requirements", "code"),               # BMC software articles
+    (r"data\s+sharing(?:\s+statement)?", "data"),                   # Lancet, BMJ
     (r"software(?=\s*\n)", "code"),          # a section titled just "Software"
     (r"lead\s+contact\s+and\s+materials\s+availability", "both"),
 ]
@@ -49,10 +52,14 @@ def find_statements(text: str, max_len: int = 1500) -> List[Statement]:
     seen_spans = []
     for pat, kind in HEADINGS:
         # heading at line start (optionally '## '), followed by ':' / newline / space
-        rx = re.compile(r"(?:^|\n)[ \t]*(?:##\s*)?(" + pat + r")\s*[:.\-–—]?\s*", re.I)
+        # heading on its own line, or a run-in head after a sentence ("... interests. Data and
+        # materials availability: All data ...", as in Science journals) which must end in ':'
+        rx = re.compile(r"(?:(?:^|\n)[ \t]*(?:##\s*)?(" + pat + r")\s*[:.\-–—]?\s*"
+                        r"|(?<=[.!?] )(" + pat + r")\s*:\s*)", re.I)
         for m in rx.finditer(text):
             start = m.end()
-            if any(a <= m.start(1) < b for a, b in seen_spans):
+            g = 1 if m.group(1) else 2
+            if any(a <= m.start(g) < b for a, b in seen_spans):
                 continue
             body = text[start:start + max_len]
             # stop at the next known heading (but not immediately)
@@ -60,15 +67,15 @@ def find_statements(text: str, max_len: int = 1500) -> List[Statement]:
             if s:
                 body = body[: s.start()]
             if structured:
-                para = body.split("\n## ", 1)[0]
+                raw = body.split("\n## ", 1)[0]
             else:  # PDFs: a blank line usually ends the statement
-                para = re.split(r"\n\s*\n(?!\s*(?:<|https?://))", body, 1)[0] if "\n\n" in body[40:] else body
-            para = " ".join(para.split())
+                raw = re.split(r"\n\s*\n(?!\s*(?:<|https?://))", body, 1)[0] if "\n\n" in body[40:] else body
+            para = " ".join(raw.split())
             if len(para) < 15:
                 continue
-            # skip table-of-contents / in-text mentions ("see Data availability")
-            seen_spans.append((m.start(1), start + len(body)))
-            out.append(Statement(kind, " ".join(m.group(1).split()), para))
+            # the span ends where the statement ends, so a following heading is still found
+            seen_spans.append((m.start(g), start + len(raw)))
+            out.append(Statement(kind, " ".join(m.group(g).split()), para))
     return out
 
 
@@ -112,7 +119,8 @@ HOSTS = {
 ACCESSION_RES = [
     (re.compile(r"\bGSE\d{3,8}\b"), "GEO"),
     (re.compile(r"\bGSE\s*[:#]?\s*\d{4,8}\b"), "GEO"),
-    (re.compile(r"\b(?:PRJNA|PRJEB|PRJDB)\d{3,8}\b"), "BioProject"),
+    (re.compile(r"\b(?:PRJNA|PRJEB|PRJDB|PRJCA)\d{3,8}\b"), "BioProject"),
+    (re.compile(r"\b(?:CRA|GWH[A-Z]{4})\d{6,8}\b"), "GSA/NGDC"),
     (re.compile(r"\b(?:SRP|SRR|SRX|ERP|ERR|DRP)\d{5,9}\b"), "SRA/ENA"),
     (re.compile(r"\bE-[A-Z]{4}-\d{2,6}\b"), "ArrayExpress"),
     (re.compile(r"\bPXD\d{6}\b"), "PRIDE"),

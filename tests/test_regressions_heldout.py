@@ -218,3 +218,97 @@ def test_third_party_data_site_is_not_own_web():
     body = "Genes were downloaded from the EcoGene web site [10] (http://ecogene.org) for testing."
     links = find_links(body, [])
     assert len(links) == 1 and links[0].own_web is False
+
+
+def test_version_cue_before_parenthesised_url():
+    links = [_link("http://pyrx.sourceforge.net/", pre="the PyRx [64] virtual screening software (v0.8) from (")]
+    mark_third_party(links)
+    assert links[0].get("third_party") and not links[0].get("unclaimed")
+
+
+# --- PLoS CB 1002284: "Software is available under the New BSD open source license ... at code.google.com"
+def test_license_stated_in_paper_counts():
+    paper = {"text_source": "x", "warnings": []}
+    ex = {"statements": [{"kind": "code", "heading": "Software",
+                          "text": "Software is available under the New BSD open source license and is freely "
+                                  "available at http://code.google.com/p/gmv ."}],
+          "on_request": [], "future_release": [], "data_in_paper": [], "no_data": [],
+          "computational_hits": 10, "generated_data_terms": [], "generated_data_verbs": [], "accessions": []}
+    links = [_link("http://code.google.com/p/gmv", pre="freely available at", in_statement=True, stmt_kind="code")]
+    items = build_checklist(paper, ex, links, [])
+    lic = next(i for i in items if i.id == "code_license")
+    assert lic.status == "PASS" and "BSD" in lic.detail
+
+
+# --- PeerJ 10.7717/peerj.6678: "R scripts to reproduce ... are available as a Supplemental File"
+def test_code_in_data_statement_supplement():
+    paper = {"text_source": "x", "warnings": []}
+    ex = {"statements": [{"kind": "data", "heading": "Data availability",
+                          "text": "R scripts to reproduce the examples, virtual experiments, and figures are "
+                                  "available as a Supplemental File."}],
+          "on_request": [], "future_release": [], "data_in_paper": [], "no_data": [],
+          "computational_hits": 0, "generated_data_terms": [], "generated_data_verbs": [], "accessions": []}
+    s = _status(build_checklist(paper, ex, [], []))
+    assert s["code_statement"] == "PASS" and s["code_link"] == "WARN"
+
+
+# --- Mol Biol Evol 10.1093/molbev/msab231: China NGDC accessions
+def test_ngdc_accessions():
+    ids = {a["id"] for a in find_accessions("deposited with accession codes PRJCA004227 and CRA003432")}
+    assert ids == {"PRJCA004227", "CRA003432"}
+
+
+# --- Sci Adv 10.1126/sciadv.abi8605 and BMC Bioinf 10.1186/1471-2105-13-216: journal-specific headings
+def test_science_and_bmc_headings():
+    t = ("## Data and materials availability:\nAll code and data are publicly available at "
+         "https://doi.org/10.5281/zenodo.5206676 .\n\n## Availability and requirements\nProject home page: "
+         "https://sourceforge.net/projects/gennonh/ License: GNU GPL\n\n## References\n")
+    kinds = {st.heading.lower(): st.kind for st in find_statements(t)}
+    assert kinds == {"data and materials availability": "both", "availability and requirements": "code"}
+
+
+# --- Lancet Glob Health 10.1016/s2214-109x(21)00392-2 is a review article; NumPy (dev set) too
+def test_review_article_not_penalised():
+    paper = {"text_source": "x", "warnings": [], "article_type": "review-article"}
+    ex = {"statements": [], "on_request": [], "future_release": [], "data_in_paper": [], "no_data": [],
+          "computational_hits": 10, "generated_data_terms": [], "generated_data_verbs": [], "accessions": []}
+    s = _status(build_checklist(paper, ex, [], []))
+    assert s["data_statement"] == s["code_statement"] == s["data_deposited"] == "N/A"
+
+
+def test_lancet_data_sharing_heading():
+    st = find_statements("## Data sharing\nDe-identified participant data will be shared on request.\n\n## References\n")
+    assert st and st[0].kind == "data"
+
+
+# --- arXiv 2610.05265: the only code repo 404s; the license message must not blame the host type
+def test_license_message_when_repo_dead():
+    paper = {"text_source": "x", "warnings": []}
+    ex = {"statements": [], "on_request": [], "future_release": [], "data_in_paper": [], "no_data": [],
+          "computational_hits": 10, "generated_data_terms": [], "generated_data_verbs": [], "accessions": []}
+    links = [_link("https://github.com/x/review-repo", pre="Our code is available at", alive=False, status=404)]
+    lic = next(i for i in build_checklist(paper, ex, links, []) if i.id == "code_license")
+    assert lic.status == "WARN" and "not reachable" in lic.detail
+
+
+# --- Sci Adv 10.1126/sciadv.abi8605: run-in head inside the acknowledgements paragraph
+def test_run_in_heading():
+    t = ("Competing interests: none. Data and materials availability: All code and data are available at "
+         "https://doi.org/10.5281/zenodo.5206676 .\n")
+    st = find_statements(t)
+    assert st and st[0].kind == "both" and "zenodo" in st[0].text
+    assert not find_statements("We discuss data availability in general terms here.\n")
+
+
+# --- Mol Biol Evol: "accession codes PRJCA004227" is not a code statement
+def test_accession_codes_are_not_code():
+    from paper_audit.audit import CODE_MENTION
+    assert not CODE_MENTION.search("deposited with the accession codes PRJCA004227")
+    assert CODE_MENTION.search("All data and scripts are available")
+
+
+def test_bmc_software_product_review_is_research():
+    paper = {"text_source": "x", "warnings": [], "article_type": "product-review"}
+    ex = {"statements": [], "on_request": [], "future_release": [], "data_in_paper": [], "no_data": [],
+          "computational_hits": 10, "generated_data_terms": [], "generated_data_verbs": [], "accessions": []}
+    assert _status(build_checklist(paper, ex, [], []))["data_statement"] == "FAIL"

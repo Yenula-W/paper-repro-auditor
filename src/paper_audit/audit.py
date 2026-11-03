@@ -18,13 +18,16 @@ CODE_TYPES = {"github", "gitlab", "bitbucket", "codeocean", "swh", "sourceforge"
               "googlecode"}
 MAX_LINKS = 30
 MAX_CLONES = 2
+NON_RESEARCH = {"review-article", "editorial", "correction", "news", "commentary", "article-commentary",
+                "book-review", "obituary", "retraction", "expression-of-concern", "announcement", "in-brief"}
+# not listed on purpose: "letter" (Nature Letters are research), "product-review" (BMC tags Software articles so)
 CHECK_NAMES = {"dependency_file": "dependency file", "readme": "README", "readme_run_steps": "run instructions in README",
                "entry_point": "entry-point script", "license_file": "license file",
                "readme_scripts_exist": "scripts named in README"}
 REGISTRY_TYPES = {"pypi", "cran", "bioconductor"}
 # "TensorFlow v.1 (url)", "WRF v3.9.1.1 source code ... here: url", "developed with X (url)"
 TOOL_CUE = re.compile(r"(?:\bv\.?\s?\d[\w.]*\)?|version\s+\d[\w.]*|developed\s+(?:with|using)|"
-                      r"implemented\s+(?:in|with|using)|built\s+(?:with|on))\b[^()\n]{0,50}\(?\s*$"
+                      r"implemented\s+(?:in|with|using)|built\s+(?:with|on))(?!\w)[^()\n]{0,50}\(?\s*$"
                       # passive third-party use: "idock [33] (v2.1.3) was downloaded from (url)"
                       r"|\b(?:was|were)\s+(?:downloaded|obtained|installed|retrieved)\s+(?:from|at|via)\s*\(?\s*$", re.I)
 
@@ -48,6 +51,13 @@ def _is_code(l: dict) -> bool:
             or (l["kind"] == "archive" and l["in_statement"] and bool(CODE_WORDS.search((l.get("pre") or "")[-160:]))))
 
 
+LICENSE_TEXT = re.compile(r"\b(?:(?:new\s+|modified\s+|simplified\s+)?BSD|MIT|Apache|L?GPL(?:v?\d)?|"
+                          r"GNU\s+(?:Lesser\s+|Affero\s+)?General\s+Public|CC[- ]BY(?:[- ]\w+)*|CC0|"
+                          r"Creative\s+Commons|Mozilla\s+Public|Artistic)\b(?:[^.]{0,30}?licen[cs]e)?", re.I)
+CODE_MENTION = re.compile(r"\b(?<!accession )(?<!access )(?<!postal )(?:(?:source\s+|analysis\s+|simulation\s+|computer\s+)?codes?|scripts?|"
+                          r"jupyter\s+notebooks?|R\s+markdown)\b", re.I)
+SUPP_CODE = re.compile(r"\b(?:codes?|scripts?|notebooks?)\b[^.]{0,120}\b(?:supplement\w*|supporting\s+information|"
+                       r"additional\s+files?|appendix)\b", re.I)
 CODE_WORDS = re.compile(r"\b(?:codes?|scripts?|software|source)\b", re.I)
 
 
@@ -115,13 +125,23 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
         add("full_text", "Full text retrieved", FAIL, "; ".join(paper["warnings"]) or "no open-access text")
         return items
     add("full_text", "Full text retrieved", PASS, paper["text_source"])
+    atype = (paper.get("article_type") or "").lower()
+    if atype in NON_RESEARCH:
+        for cid, label in (("data_statement", "Data availability statement"),
+                           ("code_statement", "Code availability statement"),
+                           ("data_deposited", "Data deposited")):
+            add(cid, label, NA, f"not expected for this article type ({atype})")
+        return items
 
     stmts = ex["statements"]
     data_st = [s for s in stmts if s["kind"] in ("data", "both")]
     # a combined "Data and code availability" section only counts for code if it talks about code
     code_st = [s for s in stmts if s["kind"] == "code"
-               or (s["kind"] == "both" and CODE_WORDS.search(s["text"]))]
-    computational = ex["computational_hits"] >= 3
+               or (s["kind"] == "both" and CODE_WORDS.search(s["text"]))
+               or (s["kind"] == "data" and CODE_MENTION.search(s["text"]))]   # "data and scripts are ..."
+    supp_code = [s for s in code_st if SUPP_CODE.search(s["text"])]
+    computational = ex["computational_hits"] >= 3 or any(
+        CODE_MENTION.search(s["text"]) for s in stmts)
     code_links = [l for l in links if _is_code(l)]
     cited = [l for l in links if l.get("third_party")]
     unclaimed = [l for l in cited if l.get("unclaimed") and l["alive"] is not False]
@@ -162,6 +182,9 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
             ", ".join(l["url"] for l in code_links[:4]))
     elif code_req:
         add("code_link", "Code link present", FAIL, "code only 'available on request'" + cited_note)
+    elif supp_code:
+        add("code_link", "Code link present", WARN,
+            "code is provided as supplementary material only (no repository or archive with a DOI)")
     elif code_st:
         add("code_link", "Code link present", WARN,
             "code statement gives no source repository (web service / description only)" + cited_note)
@@ -192,12 +215,22 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
         if archived:
             add("code_archived", "Code archived with DOI", PASS, ", ".join(l["url"] for l in archived[:3]))
         else:
-            add("code_archived", "Code archived with DOI", WARN, "code is linked only on a git host; no archived snapshot with a DOI (e.g. Zenodo, Software Heritage) was found")
+            add("code_archived", "Code archived with DOI", WARN, "code is linked only on a code-hosting site; no archived snapshot with a DOI (e.g. Zenodo, Software Heritage) was found")
         gits = [l for l in code_links if l["repo_type"] in ("github", "gitlab") and l["alive"]]
         lic = [l for l in code_links + archived if l.get("license")]
-        if gits or archived:
-            add("code_license", "Code has a license", PASS if lic else FAIL,
-                ", ".join(sorted({str(l["license"]) for l in lic})) or "no license found on the linked repository or archive")
+        lic_text = sorted({m.group(0).strip() for st in code_st for m in LICENSE_TEXT.finditer(st["text"])})
+        if gits or archived or code_links:
+            found_lic = sorted({str(l["license"]) for l in lic}) + [f'"{t}" (stated in paper)' for t in lic_text]
+            if found_lic:
+                add("code_license", "Code has a license", PASS, ", ".join(found_lic))
+            elif gits or archived:
+                add("code_license", "Code has a license", FAIL, "no license found on the linked repository or archive")
+            elif not alive_code or all(l["alive"] is False for l in code_links if l["repo_type"] in ("github", "gitlab")):
+                add("code_license", "Code has a license", WARN,
+                    "license could not be checked: the code repository was not reachable")
+            else:
+                add("code_license", "Code has a license", WARN,
+                    "license could not be checked automatically for this host and none is stated in the paper")
         pinned = [l for l in code_links + archived if l.get("pinned_ref") or l.get("releases_before_pub") or l["archived_doi"]]
         drift = [l for l in gits if l.get("commits_after_pub")]
         if pinned:
@@ -220,7 +253,7 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
     data_req = [st for st in data_st if data_code_requests(st["text"])]
     # "All data and scripts ... are available at <github/swh>" => data deposited with the code
     data_in_code = [l for l in code_links if l.get("stmt_kind") in ("data", "both")
-                    and any(re.search(r"\bdata\b", st["text"], re.I) and l["url"] in st["text"] for st in data_st)]
+                    and any(re.search(r"\bdata(?:sets?)?\b", st["text"], re.I) and l["url"] in st["text"] for st in data_st)]
     if data_req and not data_links and not ex["accessions"]:
         add("data_deposited", "Data deposited", FAIL, "data only 'available on request'")
     elif ex["no_data"] and not data_links:

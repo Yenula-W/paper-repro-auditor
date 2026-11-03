@@ -38,6 +38,7 @@ class Paper:
     text: str = ""                 # body text, references stripped where possible
     full_text: str = ""            # everything incl. back matter (for statements)
     text_source: str = "none"
+    article_type: str = ""         # JATS article-type, e.g. research-article / review-article
     pdf_links: List[str] = field(default_factory=list)   # link annotations from PDF
     warnings: List[str] = field(default_factory=list)
 
@@ -326,6 +327,8 @@ def load_paper(inp: str) -> Paper:
         if r.ok and b"<article" in r.content[:5000]:
             try:
                 p.text, p.full_text, p.pdf_links = jats_to_text(r.text)
+                m = re.search(r'<article\b[^>]*\barticle-type="([^"]+)"', r.text[:20000])
+                p.article_type = m.group(1) if m else ""
                 p.text_source = f"europepmc:{pmcid}"
                 return p
             except ET.ParseError:
