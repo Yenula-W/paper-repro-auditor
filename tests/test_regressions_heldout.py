@@ -312,3 +312,29 @@ def test_bmc_software_product_review_is_research():
     ex = {"statements": [], "on_request": [], "future_release": [], "data_in_paper": [], "no_data": [],
           "computational_hits": 10, "generated_data_terms": [], "generated_data_verbs": [], "accessions": []}
     assert _status(build_checklist(paper, ex, [], []))["data_statement"] == "FAIL"
+
+
+# --- arXiv 1709.04065 (FLaapLUC): PDF quirks hid the authors' own repo and broke a Zenodo DOI
+def test_pdf_quirks_flaapluc():
+    from paper_audit.sources import Paper
+    raw = ("FLaapLUC (Lenain, 2017) has been made publicly avail-\nable on GitHub at github.com /jlenain/flaapluc, "
+           "and contributions are welcome.\nLenain, J.-P., 2017. Astrophysics Source Code Library. doi: 10.5281/zenodo.\n906991, ascl.")
+    fixed = _fix_pdf_breaks(raw)
+    assert "publicly available on GitHub at github.com/jlenain/flaapluc" in fixed
+    assert "10.5281/zenodo.906991" in fixed
+    urls = {l.url for l in find_links(raw, [])}
+    assert {"https://github.com/jlenain/flaapluc", "https://doi.org/10.5281/zenodo.906991"} <= urls
+    links = [_link("https://github.com/jlenain/flaapluc", pre="see also the code at the address in footnote 3")]
+    mark_third_party(links, "FLaapLUC: a pipeline for the generation of prompt alerts on transient Fermi-LAT gamma-ray sources")
+    assert not links[0].get("third_party")
+    assert "https://github.com/a/repo-\nname" not in _fix_pdf_breaks("x")   # URL hyphens untouched below
+    assert _fix_pdf_breaks("https://github.com/jjackson-\neco/repo") == "https://github.com/jjackson-eco/repo"
+
+
+# --- arXiv 2609.12862 (simulation physics): "we measured" alone is not evidence of undeposited data
+def test_verbs_alone_do_not_fail_data():
+    paper = {"text_source": "x", "warnings": []}
+    ex = {"statements": [], "on_request": [], "future_release": [], "data_in_paper": [], "no_data": [],
+          "computational_hits": 10, "accessions": [], "generated_data_terms": ["we measured"],
+          "generated_data_verbs": ["we measured"]}
+    assert _status(build_checklist(paper, ex, [], []))["data_deposited"] == "WARN"

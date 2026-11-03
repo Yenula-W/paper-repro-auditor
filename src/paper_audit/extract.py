@@ -150,6 +150,10 @@ class Link:
 DASHES = dict.fromkeys(map(ord, "\u2010\u2011\u2012\u2013\u2014\u2212\u00ad"), "-")
 
 
+BOILERPLATE = re.compile(r"(?:^|\.)(?:creativecommons\.org|orcid\.org|crossmark\.crossref\.org|"
+                         r"loop\.frontiersin\.org|copyright\.com|w3\.org|schema\.org)$")
+
+
 def _clean_url(u: str) -> str:
     u = u.translate(DASHES).replace("\u200b", "")   # typeset hyphens / zero-width spaces
     u = u.strip().rstrip(".,;:'\"")
@@ -208,8 +212,13 @@ def _context(text: str, i: int, j: int, w: int = 120) -> str:
 
 def _fix_pdf_breaks(text: str) -> str:
     """Re-join URLs broken across PDF line wraps (e.g. 'github.com/user/\\nrepo')."""
-    # '.' is deliberately not a join point: "github.com/x/repo.\n40th Conference" is a sentence end
-    return re.sub(r"((?:https?://|github\.com/|zenodo\.org/|doi\.org/)\S*[/\-_=])\n(?=[\w\-])", r"\1", text)
+    text = re.sub(r"\b(github\.com|gitlab\.com|zenodo\.org|doi\.org|osf\.io) /", r"\1/", text)
+    # '.' is deliberately not a join point: "github.com/x/repo.\n40th Conference" is a sentence end,
+    # except for DOI stems that cannot end there: "10.5281/zenodo.\n906991"
+    text = re.sub(r"(\b10\.\d{4,9}/(?:zenodo|m9\.figshare|dryad)\.)\s*\n\s*(?=\d|[a-z0-9]{5})", r"\1", text)
+    text = re.sub(r"((?:https?://|github\.com/|zenodo\.org/|doi\.org/)\S*[/\-_=])\n(?=[\w\-])", r"\1", text)
+    # word hyphenation outside URLs: "made publicly avail-\nable" -> "available"
+    return re.sub(r"(?<![/\w.])([A-Za-z]{2,})-\n([a-z]{2,})\b", r"\1\2", text)
 
 
 def find_links(body: str, statements: List[Statement], extra: Optional[List[str]] = None,
@@ -226,6 +235,8 @@ def find_links(body: str, statements: List[Statement], extra: Optional[List[str]
         if self_doi and self_doi.lower() in key:
             return
         if key.endswith((".pdf",)) and kind == "other":
+            return
+        if BOILERPLATE.search(host):     # licences of the article itself, author IDs, publisher chrome
             return
         if key in found:
             if in_stmt and not found[key].in_statement:

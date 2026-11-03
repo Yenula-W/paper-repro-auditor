@@ -83,7 +83,14 @@ def _owner(l: dict) -> Optional[str]:
     return m.group(1).lower() if m else None
 
 
-def mark_third_party(links: List[dict]) -> None:
+def _named_in_title(l: dict, title: str) -> bool:
+    """Tool papers: 'FLaapLUC: a pipeline ...' links github.com/jlenain/flaapluc."""
+    m = re.match(r"https?://[^/]+/[^/]+/([^/#?]+)", l["url"])
+    name = re.sub(r"[^a-z0-9]", "", (m.group(1) if m else "").lower().replace(".git", ""))
+    return len(name) >= 4 and name in re.sub(r"[^a-z0-9]", "", (title or "").lower())
+
+
+def mark_third_party(links: List[dict], title: str = "") -> None:
     """Heuristically flag links to cited tools/dependencies (not the paper's own code).
 
     A code link counts as the authors' own when it is in an availability statement (and not
@@ -103,7 +110,7 @@ def mark_third_party(links: List[dict]) -> None:
             l["third_party"] = True
         elif NOT_REPO.search(l["url"]):
             l["third_party"] = True
-        elif not l["in_statement"] and not OWN_CUE.search(_sentence(pre[-160:])):
+        elif not l["in_statement"] and not OWN_CUE.search(_sentence(pre[-160:])) and not _named_in_title(l, title):
             l["third_party"] = True
             l["unclaimed"] = True        # no cue either way: could still be the authors' code
         elif not first_own and (l.get("stars") or 0) >= 5000:
@@ -251,6 +258,8 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
             add("repo_checks", "Repo light checks", PASS if not fails else WARN, ("not found: " + ", ".join(fails)) if fails else "dependency file, README run steps, entry point and license present")
 
     data_req = [st for st in data_st if data_code_requests(st["text"])]
+    # data-type terms only ("RNA-seq", "questionnaire"); verbs alone ("we measured") prove nothing
+    data_terms = [t for t in ex["generated_data_terms"] if not t.startswith("we ") and "participants" not in t]
     # "All data and scripts ... are available at <github/swh>" => data deposited with the code
     data_in_code = [l for l in code_links if l.get("stmt_kind") in ("data", "both")
                     and any(re.search(r"\bdata(?:sets?)?\b", st["text"], re.I) and l["url"] in st["text"] for st in data_st)]
@@ -268,9 +277,9 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
             + ", ".join(l["url"] for l in (arch or data_in_code)[:3]))
     elif ex["data_in_paper"]:
         add("data_deposited", "Data deposited", WARN, "data are stated to be in the paper/supplement only; no repository deposit found")
-    elif ex["generated_data_terms"] and ex.get("generated_data_verbs"):
+    elif data_terms and ex.get("generated_data_verbs"):
         add("data_deposited", "Data deposited", FAIL,
-            "methods mention " + ", ".join(ex["generated_data_terms"][:4]) + " but no repository link or accession number was found")
+            "methods mention " + ", ".join(data_terms[:4]) + " but no repository link or accession number was found")
     else:
         add("data_deposited", "Data deposited", WARN, "no data repository link or accession number found")
     return items
@@ -292,7 +301,7 @@ def audit(inp: str, clone: bool = True, paper: Optional[Paper] = None, log=lambd
     log(f"resolving {min(len(candidates), MAX_LINKS)} link(s)")
     with ThreadPoolExecutor(max_workers=8) as pool:
         links = [r.to_dict() for r in pool.map(lambda l: resolve_link(l, p.published), candidates[:MAX_LINKS])]
-    mark_third_party(links)
+    mark_third_party(links, p.title)
     # dedupe repos that were linked via several URLs
     repos, seen = [], set()
     if clone:

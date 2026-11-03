@@ -5,6 +5,7 @@ Open APIs only: Crossref, OpenAlex, Europe PMC, arXiv, optional Unpaywall.
 from __future__ import annotations
 
 import io
+import unicodedata
 import logging
 import os
 import re
@@ -97,7 +98,8 @@ def pdf_to_text(data: bytes) -> tuple[str, List[str]]:
                     links.append(str(uri))
         except Exception:  # noqa: BLE001
             pass
-    return "\n".join(pages), list(dict.fromkeys(links))
+    text = unicodedata.normalize("NFKC", "\n".join(pages))    # ligatures: "ﬂaapluc" -> "flaapluc"
+    return text, list(dict.fromkeys(links))
 
 
 def safe_pdf_to_text(data: bytes) -> tuple:
@@ -297,10 +299,17 @@ def load_paper(inp: str) -> Paper:
         p.arxiv_id = ident
         meta = arxiv_meta(ident)
         p.title, p.published, p.journal = meta.get("title", ""), meta.get("published", ""), meta.get("journal", "arXiv")
-        p.doi = (meta.get("doi") or "").lower() or None
+        doi = (meta.get("doi") or "").lower() or None
+        from .extract import REPO_DOI_PREFIX
+        if doi and doi.split("/")[0] in REPO_DOI_PREFIX:   # authors put their Zenodo/Figshare DOI here
+            p.pdf_links.append("https://doi.org/" + doi)
+            doi = None
+        p.doi = doi
         data = _fetch_pdf(f"https://arxiv.org/pdf/{ident}")
         if data:
+            extra = list(p.pdf_links)
             _use_pdf(p, data, f"pdf:https://arxiv.org/pdf/{ident}")
+            p.pdf_links = extra + p.pdf_links
         else:
             p.warnings.append("arXiv PDF download failed")
         return p
