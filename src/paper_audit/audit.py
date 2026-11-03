@@ -84,7 +84,7 @@ def _sentence_with(text: str, url: str) -> str:
 
 def _is_data(l: dict) -> bool:
     return not _is_code(l) and not l.get("third_party") and l["kind"] != "web" and (
-        l["kind"] in ("data", "archive") or (l["in_statement"] and l["kind"] == "doi") or _data_on_code_host(l))
+        l["kind"] in ("data", "archive") or (l["in_statement"] and l["kind"] == "doi"))
 
 
 def _code_only_request(snippet: str) -> bool:
@@ -305,7 +305,9 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
     # the sentence holding the link must mention data ("The NACC code is available at <zenodo>" does not)
     data_in_code = [l for l in code_links if l.get("stmt_kind") in ("data", "both")
                     and any(re.search(r"\bdata(?:sets?)?\b", _sentence_with(st["text"], l["url"]), re.I) for st in data_st)]
-    if data_req and not data_links and not ex["accessions"]:
+    # "Samples of our datasets are available at <github>": data on a code host, without an archive
+    data_in_code += [l for l in links if _data_on_code_host(l) and not l.get("third_party") and l not in data_in_code]
+    if data_req and not data_links and not ex["accessions"] and not data_in_code:
         add("data_deposited", "Data deposited", FAIL, "data only 'available on request'")
     elif ex["no_data"] and not data_links:
         add("data_deposited", "Data deposited", NA, ex["no_data"][0][:200])
@@ -316,7 +318,8 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
         arch = [l for l in data_in_code if l["archived_doi"] or l["repo_type"] == "swh"]
         add("data_deposited", "Data deposited", PASS if arch else WARN,
             ("data shipped with archived code: " if arch else "data only in a git repository (no DOI archive): ")
-            + ", ".join(l["url"] for l in (arch or data_in_code)[:3]))
+            + ", ".join(l["url"] for l in (arch or data_in_code)[:3])
+            + ("; other data only 'available on request'" if data_req else ""))
     elif ex["data_in_paper"]:
         add("data_deposited", "Data deposited", WARN, "data are stated to be in the paper/supplement only; no repository deposit found")
     elif data_terms and ex.get("generated_data_verbs"):
@@ -335,7 +338,13 @@ def score(items: List[Item]) -> dict:
             "fail": sum(i.status == FAIL for i in items)}
 
 
-def audit(inp: str, clone: bool = True, paper: Optional[Paper] = None, log=lambda *_: None) -> dict:
+# Checks that missed the shipping precision bar on untouched rounds (see EVALUATION.md): off by
+# default, enabled with --experimental. Their evidence (accessions, data links) is always reported.
+EXPERIMENTAL = {"data_deposited", "not_future"}
+
+
+def audit(inp: str, clone: bool = True, paper: Optional[Paper] = None, log=lambda *_: None,
+          experimental: bool = False) -> dict:
     p = paper or load_paper(inp)
     log(f"text: {p.text_source}")
     ex = extract(p.text, p.full_text, p.pdf_links, p.doi)
@@ -359,11 +368,14 @@ def audit(inp: str, clone: bool = True, paper: Optional[Paper] = None, log=lambd
     exd = ex.to_dict()
     exd.pop("links")
     items = build_checklist(pd, exd, links, repos)
+    if not experimental:
+        items = [i for i in items if i.id not in EXPERIMENTAL]
     return {
         "tool": f"paper-repro-auditor {__version__}",
         "audited_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
         "paper": pd,
         "summary": score(items),
+        "experimental_checks": experimental,
         "checklist": [asdict(i) for i in items],
         "evidence": {**exd, "links": links, "repos": repos},
     }

@@ -29,7 +29,7 @@ def status(r):
 def test_on_request_paper(replay):
     # Sci Rep 2020: data AND Python scripts only "from the corresponding author on reasonable request"
     replay("10_1038_s41598-020-77660-4")
-    r = audit("10.1038/s41598-020-77660-4", clone=False)
+    r = audit("10.1038/s41598-020-77660-4", clone=False, experimental=True)
     s = status(r)
     assert r["paper"]["text_source"].startswith("europepmc:")
     assert s["data_statement"] == "PASS" and s["code_statement"] == "PASS"
@@ -42,7 +42,7 @@ def test_on_request_paper(replay):
 def test_zenodo_paper(replay):
     # Nat Commun 2022: code + raw data on Zenodo
     replay("10_1038_s41467-022-33265-1")
-    r = audit("10.1038/s41467-022-33265-1", clone=False)
+    r = audit("10.1038/s41467-022-33265-1", clone=False, experimental=True)
     s = status(r)
     for k in ("data_statement", "code_statement", "code_link", "links_alive",
               "code_archived", "code_license", "version_pinned", "data_deposited"):

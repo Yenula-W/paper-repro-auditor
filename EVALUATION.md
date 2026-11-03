@@ -1,5 +1,91 @@
 # EVALUATION — paper-repro-auditor
 
+## Ship bar (`SHIP_BAR.md`), 2026-11-03: **not met**
+
+The ship bar needs two untouched rounds in a row passing with no code change between them. That did
+not happen within the 3-round cap. Every round failed on first run, and each failure was fixed (with
+regression tests) before the next round. As the bar requires for a check type that still fails after
+the cap, **`data_deposited` and `not_future` are now off by default**. They run only with
+`--experimental`.
+
+The streak started at 0: the earlier round 3 (91%) was followed by code changes (round-3 fixes, statement
+dedupe), so it could not count.
+
+**Method.** Each round used 10 papers drawn at random (OpenAlex `sample`, fixed seed) from 10 journals not
+used before: 30 journals in total, none from earlier rounds, one field label each (`examples/ship_r*.csv`). Each round ran once on the
+committed code, with an HTTP cache recording exactly what the tool saw. Every judgment was then labelled by
+hand against the paper text, with links re-checked by `curl` or the GitHub API, before any code was touched.
+Labels and first-run scores are in `examples/ship_r{1,2,3}_labels.csv` and
+`examples/ship_r{1,2,3}_eval_firstrun.md`.
+
+Label conventions:
+- `A|B` marks a debatable case.
+- If OpenAlex lists a paper as open access but every copy refuses automated download, `full_text` WARN
+  is correct. This was fixed after round 1 (round 1 labels said PASS and are left unchanged).
+- "Overstated" means a wrong judgment that asserts something false (any wrong PASS/WARN/FAIL). It
+  excludes judgments that were simply missed (tool N/A).
+
+| Round | Commit run | Journals (field) | Judgments | First-run precision | Checks below 80% | Crashes | Overstated |
+|---|---|---|---|---|---|---|---|
+| S1 | `740b81c` | GMD (atmos. modelling), PeerJ CS, Phys Rev Research, A&A, Wellcome Open Res, Glossa (linguistics), BMC Public Health, Front Vet Sci, ACS Omega, Economies | 70 | **83%** | full_text 60%, code_link 67%, data_deposited 50% | 0 | 11 |
+| S2 | `5defad2` | JOSS, GigaScience, IEEE Access, New J Phys, Ecosphere, PLOS NTD, JMIR, HESS (hydrology), Education Sciences, J R Soc Interface | 80 | **90%** | data_deposited 71% | 0 | 7 |
+| S3 | `9b9540e` | Front Neuroinform, npj Comput Mater, Socius (sociology), Research & Politics, J Stat Softw, BMJ Glob Health, Chem Sci, Evol Hum Sci, ESSD, J Archaeol Sci Rep | 81 | **93%** | data_deposited 71%, not_future 0% (1 judged) | 0 | 5 |
+
+Per check, first run (correct + debatable / judged):
+
+| Check | S1 | S2 | S3 |
+|---|---|---|---|
+| full_text | 6/10 (60%) | 10/10 | 10/10 |
+| data_statement | 6/6 | 6/7 (86%) | 6/7 (86%) |
+| code_statement | 5/6 (83%) | 7/7 | 6/7 (86%) |
+| not_on_request | 6/6 | 7/7 | 6/7 (86%) |
+| not_future | – | – | 0/1 |
+| code_link | 4/6 (67%) | 6/7 (86%) | 7/7 |
+| links_alive | 5/6 (83%) | 7/7 | 7/7 |
+| code_archived | 5/6 (83%) | 6/7 (86%) | 7/7 |
+| code_license | 6/6 | 6/7 (86%) | 7/7 |
+| version_pinned | 6/6 | 6/7 (86%) | 7/7 |
+| repo_checks | 6/6 | 6/7 (86%) | 7/7 |
+| data_deposited | 3/6 (50%) | 5/7 (71%) | 5/7 (71%) |
+
+If the two now-experimental checks are left out, the default checks scored S2 92% (73 judged, none below
+86%) and S3 96% (73 judged, none below 86%). That would be two passing rounds. They do **not** form a
+streak, though, because the round-2 fixes went in between them. This subset was also chosen after seeing
+the results.
+
+After the fixes, all three rounds re-score at 97%, 100% and 100% (`examples/ship_r*_eval_afterfix.md`). The
+two remaining "wrong" judgments are round-1 `full_text` WARNs for publisher-blocked OA papers, under the old
+label convention. The 48 earlier held-out papers re-run with no regressions: 358/360, with 2 transient
+link WARNs from rate limits.
+
+### Wrong judgments in the ship rounds and their root-cause fixes (tests in `tests/test_regressions_heldout.py`)
+
+| Round | Paper | Wrong | Root cause → fix |
+|---|---|---|---|
+| S1 | PRR 2.023290, A&A 201937108 | full_text FAIL on OA papers | OpenAlex renamed `oa_locations` to `locations`, so arXiv copies were never tried → read both |
+| S1 | Glossa gjgl.583, Economies 12070176 | full_text FAIL | the publisher blocks bots, but the paper is OA → WARN "listed as open access … audit a saved PDF" |
+| S1 | Wellcome Open Res 16323.1 | dead Dataverse link; code not seen | PDF glued reference no. 37 onto the DOI → strip when the shorter DOI appears elsewhere; F1000 "Extended data <repo>:" no longer ends the statement; STATA scripts in a DOI archive count as archived code; length cap 1500 → 2500 |
+| S1 | PeerJ CS 735 | code FAIL, data WARN on a literature review | "used no data as it is a literature review" → no-data + review → code and data N/A |
+| S1 | Front Vet Sci 1415423 | data_deposited FAIL | Frontiers "original contributions … included in the article/Supplementary material" → in-paper WARN |
+| S1 | GMD 15-3281 | data_deposited PASS from a software-only Zenodo record | "data shipped with code" must have "data" in the link's own sentence |
+| S1 | (all PDFs) | PubMed/PMC "Free Full Text" reference links counted as data | literature links ignored |
+| S2 | New J Phys acca9c | no data statement | PDF lost spaces: "Dataavailabilitystatement" → heading patterns tolerate missing spaces; IOP "data that support the findings … included within the article" |
+| S2 | HESS 24-2999 | code PASS/license FAIL for a data wiki; data FAIL "on request" | URL broken at a PDF line end inside the statement → PDF re-join applied to statements; GitHub link in a sentence about data with no code words = data; "model source code … upon request" is a code-only request |
+| S2 | JOSS 02673 | data PASS from a cited figshare DOI; own repo treated as cited tool | PDF link annotations printed only in the reference list are dropped; `DrWatson.jl` matches title "DrWatson" |
+| S3 | ESSD 14-3997 | no statement, BODC DOI missed, "will shortly be made available" missed | numbered headings ("6 Code and data availability"); BODC/NERC EDS prefix 10.5285; FUTURE allows "shortly/soon" |
+| S3 | Front Neuroinform 613666 | on-request missed | Frontiers "Requests to access these datasets should be directed to …" |
+| S3 | npj Comput Mater 00889-2 | data PASS for a sample on GitHub | data only on a code host → WARN "no DOI archive; other data only on request" |
+
+### Ship-bar items 3–5
+
+- **Item 3 (install on the final commit):** see "Install" below. Re-run on the final commit with 3.9, 3.12 and 3.13; the README quickstart was run word for word.
+- **Item 4 (optional extras):** the only optional extra is `test = ["pytest"]`. There are no optional runtime packages, so no test needs to skip. The suite passes on a bare `pip install -e . pytest`.
+- **Item 5:** CI green, repo private, all rounds recorded here.
+
+---
+
+## Adoption bar (`ADOPTION_BAR.md`), earlier pass
+
 Status against the shared adoption bar (`ADOPTION_BAR.md`), measured 2026-11-03 on commit `main`.
 
 | Bar item | Result |
@@ -225,7 +311,7 @@ Every message template was reviewed for accuracy and tone:
 ## 6. CI (bar item 6)
 
 `.github/workflows/ci.yml`: uv-managed Python on Ubuntu (3.9, 3.12, 3.13) and macOS (3.9, 3.12); runs the
-89 offline tests (recorded HTTP fixtures, no network) and a CLI smoke test. All green.
+106 offline tests (recorded HTTP fixtures, no network) and a CLI smoke test. All green.
 (`actions/setup-python` no longer provides 3.9 on Ubuntu 26.04 runners, hence uv.)
 
 ## Known limitations
@@ -240,5 +326,5 @@ Every message template was reviewed for accuracy and tone:
 - **Not supported:** closed-access papers with no open-access copy (metadata only).
 - **Version matching** uses releases/tags up to 30 days after publication, pinned URLs, or versioned archives. It does not compare code with the paper.
 - **OSF projects** are counted as archived, but unlike registrations they can still change.
-- **`not_future`** ("will be made available") was never triggered in 48 papers, so its precision is unmeasured.
+- **`not_future`** and **`data_deposited`** are experimental (`--experimental`). `not_future` fired once in 78 papers and missed that one. `data_deposited` stayed at 71% in ship rounds 2 and 3, mostly on "no new data" vs "not shared" and on data hosted outside the known repositories.
 - **GitHub API:** about 4 calls per GitHub repo, so set `GITHUB_TOKEN` for batches over about 15 papers. The tool makes no search-API calls, so the 30/min search limit does not apply.

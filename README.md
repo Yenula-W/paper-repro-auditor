@@ -26,7 +26,8 @@ Output goes to `audit-out/` by default: one `<doi>.md` and `<doi>.json` per pape
 also writes `summary.csv` and `summary.md` (one row per paper, one column per check). A paper
 that fails does not stop the batch; it gets an `error` entry in `summary.csv`.
 
-Flags: `--no-clone` skips the repo checks, `--json` prints JSON instead of Markdown, `-q` is quiet.
+Flags: `--no-clone` skips the repo checks, `--json` prints JSON instead of Markdown, `-q` is quiet,
+`--experimental` adds the two checks that missed the precision bar (`data_deposited`, `not_future`; see below).
 Exit codes: 0 = report written, 2 = input could not be audited (message on stderr, no traceback;
 set `PAPER_AUDIT_DEBUG=1` to see one). Batch `summary.csv` also records runtime and output size per paper.
 
@@ -38,16 +39,21 @@ set `PAPER_AUDIT_DEBUG=1` to see one). Batch `summary.csv` also records runtime 
 | `data_statement` | "Data availability" / "Availability of data and materials" / "Data Records" … section found | | none |
 | `code_statement` | "Code availability" / "Availability and implementation" section, or a code link inside an availability statement | code linked only in body text | none, and paper looks computational |
 | `not_on_request` | no "available (up)on request" / "from the corresponding author" | phrase only outside the statements | phrase in a statement, or no deposit at all |
-| `not_future` (only if triggered) | | | "will be made available" / "upon publication" |
+| `not_future` (experimental; only if triggered) | | | "will be made available" / "upon publication" |
 | `code_link` | link to the paper's own code (GitHub/GitLab/Zenodo software/SWH/Code Ocean …) | statement points only to a website or web server | code "on request", or computational paper with no code link |
 | `links_alive` | every audited link resolves | some links blocked (403/429/timeouts) | 404/410 or the host no longer resolves |
 | `code_archived` | code has a DOI or persistent snapshot (Zenodo, Figshare, Software Heritage …) | bare GitHub/GitLab only | |
 | `code_license` | license on the repo or archive | | no license detected |
 | `version_pinned` | URL pins a tag/commit, the archive is versioned, or a GitHub release exists up to 30 days after publication | none; also notes "repo changed after publication" | |
 | `repo_checks` | blobless shallow clone: dependency file, README with run steps, entry point, license file | some missing | clone failed |
-| `data_deposited` | repository link (Dryad, Zenodo, OSF, Figshare, GEO, …) or accession (GSE, PRJNA, PXD, EGA, …) | data "in the paper/SI" only, or data only in a git repo with no archive | "on request", or methods describe new data (we collected / sequenced …) but nothing deposited |
+| `data_deposited` (experimental) | repository link (Dryad, Zenodo, OSF, Figshare, GEO, …) or accession (GSE, PRJNA, PXD, EGA, …) | data "in the paper/SI" only, or data only in a git repo with no archive | "on request", or methods describe new data (we collected / sequenced …) but nothing deposited |
 
 The score is (PASS + 0.5 × WARN) / applicable checks × 100. N/A checks are not counted.
+
+**Experimental checks.** `data_deposited` and `not_future` are off by default. They did not reach the
+shipping precision bar (≥80% per check on untouched papers; see [`EVALUATION.md`](EVALUATION.md)), so they run
+only with `--experimental`. The evidence they use (accession numbers, data links, request phrases) is
+still listed in every report.
 
 ### How it works
 
@@ -98,7 +104,7 @@ The tests use replay mode.
 
 ## Hand-checked results
 
-> **Adoption evaluation:** see [`EVALUATION.md`](EVALUATION.md) — 48 held-out papers (0 crashes) and 360 hand-checked judgments (91% precision on the last untouched round, 84% across all first runs, every found error fixed with a regression test). The table below is the original 13-paper development set.
+> **Evaluation:** see [`EVALUATION.md`](EVALUATION.md). It covers 78 held-out papers from 40+ journals with 0 crashes, and 591 hand-checked judgments. Untouched first-run precision across three ship rounds of 10 new journals each was 83%, 90% and 93%. Every error found was fixed with a regression test. The ship bar's two-round streak was not reached, so `data_deposited` and `not_future` are now experimental. The table below is the original 13-paper development set.
 
 The tool was run on 13 open-access papers across fields. For each paper I read the
 availability sections and links in the source (Europe PMC XML / arXiv PDF) by hand. Dead or
@@ -180,7 +186,7 @@ Real problems it caught (all confirmed by hand):
 
 ```bash
 uv venv -p 3.11 .venv && uv pip install -p .venv -e '.[test]'
-.venv/bin/pytest -q          # 89 tests, no network (recorded fixtures in tests/fixtures/)
+.venv/bin/pytest -q          # 106 tests, no network (recorded fixtures in tests/fixtures/)
 ```
 
 To add a fixture, record it:

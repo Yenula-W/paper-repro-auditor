@@ -480,7 +480,7 @@ def test_hess_data_on_github_and_code_on_request():
     s = _status(build_checklist({"text_source": "pdf", "warnings": []}, asdict(ex), links, []))
     assert s["code_link"] == "FAIL" and s["not_on_request"] == "FAIL"
     assert s["code_archived"] == "N/A" and "code_license" not in s
-    assert s["data_deposited"] == "PASS"
+    assert s["data_deposited"] == "WARN"   # data only on a git host (round 3: no DOI archive -> WARN)
 
 
 # --- JOSS 10.21105/joss.02673: PDF link annotations of the reference list (a figshare DOI of a
@@ -498,3 +498,60 @@ def test_julia_suffix_repo_named_in_title():
     from paper_audit.audit import _named_in_title
     assert _named_in_title({"url": "https://github.com/JuliaDynamics/DrWatson.jl"},
                            "DrWatson: the perfect sidekick for your scientific inquiries")
+
+
+# ===================== ship-bar round 3 (10 more new journals) =====================
+
+# --- ESSD 10.5194/essd-14-3997-2022: numbered Copernicus heading "6 Code and data availability",
+#     a BODC dataset DOI (10.5285) and "will shortly be made available"
+def test_essd_numbered_heading_bodc_and_future():
+    full = ("\n6 Code and data availability\nThe data are made available via the British Oceanographic\n"
+            "Data Centre (BODC), via https://doi.org/10.5285/e6974644-\n2026-0f94-e053-6c86abc00109 (Loveday, 2022).\n"
+            "Access to the code for the primary productivity processor will\nshortly be made available via "
+            "https://github.com/timjsmyth/\nGliderPP (Loveday and Smyth, 2020).\n7 Conclusions\nThis paper")
+    ex = extract("We processed glider data with a Python processor.", full)
+    assert ex.statements and ex.statements[0].kind == "both"
+    assert ex.future_release
+    urls = {l.url for l in ex.links}
+    assert "https://doi.org/10.5285/e6974644-2026-0f94-e053-6c86abc00109" in urls
+    assert "https://github.com/timjsmyth/GliderPP" in urls
+    assert classify_url("https://doi.org/10.5285/e6974644-2026-0f94-e053-6c86abc00109")[2] == "bodc-nerc-eds"
+
+
+# --- Front Neuroinform 10.3389/fninf.2020.613666: Frontiers restricted-data template
+def test_frontiers_requests_to_access_is_on_request():
+    t = ("\nData Availability Statement\nThe data analyzed in this study is subject to the following licenses/"
+         "restrictions: The authors do not have permission to share data. Requests to access these datasets "
+         "should be directed to Qiyang Lu, x@example.org.\n")
+    assert extract("body", t).on_request
+
+
+# --- npj Comput Mater 10.1038/s41524-022-00889-2: "Samples of our datasets are available at
+#     <github>", full data on request -> data only on a git host (WARN), not "deposited"
+def test_data_sample_on_github_is_not_a_deposit():
+    text = ("Samples of our datasets are available at https://github.com/m/topo/tree/main/data_sample. "
+            "The full training datasets are available from the corresponding author upon reasonable request.")
+    st = [{"kind": "data", "heading": "DATA AVAILABILITY", "text": text},
+          {"kind": "code", "heading": "CODE AVAILABILITY", "text": "Source code is available at https://github.com/m/topo."}]
+    ex = {"statements": st, "on_request": [text[90:]], "future_release": [], "data_in_paper": [], "no_data": [],
+          "computational_hits": 60, "generated_data_terms": [], "generated_data_verbs": [], "accessions": []}
+    d = _link("https://github.com/m/topo/tree/main/data_sample", in_statement=True, stmt_kind="data",
+              pre="Samples of our datasets are available at")
+    c = _link("https://github.com/m/topo", in_statement=True, stmt_kind="code", pre="Source code is available at")
+    items = build_checklist({"text_source": "pdf", "warnings": []}, ex, [d, c], [])
+    s = _status(items)
+    assert s["data_deposited"] == "WARN" and s["code_link"] == "PASS"
+    assert "on request" in [i for i in items if i.id == "data_deposited"][0].detail
+
+
+# --- data_deposited and not_future missed the bar on untouched rounds: off unless --experimental
+def test_experimental_checks_are_opt_in():
+    from paper_audit.audit import audit
+    from paper_audit.sources import Paper
+    p = Paper(input="x", kind="pdf", text_source="pdf:x",
+              text="We sequenced RNA-seq. Data will be made available upon publication.",
+              full_text="\nData availability\nData will be made available upon publication.\n")
+    off = {i["id"] for i in audit("x", clone=False, paper=p)["checklist"]}
+    on = {i["id"] for i in audit("x", clone=False, paper=p, experimental=True)["checklist"]}
+    assert "data_deposited" not in off and "not_future" not in off
+    assert {"data_deposited", "not_future"} <= on

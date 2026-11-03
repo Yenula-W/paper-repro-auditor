@@ -57,7 +57,8 @@ def find_statements(text: str, max_len: int = 2500) -> List[Statement]:
         # heading at line start (optionally '## '), followed by ':' / newline / space
         # heading on its own line, or a run-in head after a sentence ("... interests. Data and
         # materials availability: All data ...", as in Science journals) which must end in ':'
-        rx = re.compile(r"(?:(?:^|\n)[ \t]*(?:##\s*)?(" + pat + r")\s*[:.\-–—]?\s*"
+        # Copernicus numbers its sections: "6 Code and data availability"
+        rx = re.compile(r"(?:(?:^|\n)[ \t]*(?:##\s*)?(?:\d{1,2}(?:\.\d{1,2})*\.?[ \t]+)?(" + pat + r")\s*[:.\-–—]?\s*"
                         r"|(?<=[.!?] )(" + pat + r")\s*:\s*)", re.I)
         for m in rx.finditer(text):
             start = m.end()
@@ -99,7 +100,7 @@ REPO_DOI_PREFIX = {
     "10.17632": "mendeley-data", "10.15468": "gbif", "10.25740": "stanford-sdr",
     "10.6075": "ucsd-library", "10.4121": "4tu", "10.17863": "cambridge-repo",
     "10.5255": "uk-data-archive", "10.3886": "icpsr", "10.18150": "harvard-repo",
-    "10.7272": "nimh-data", "10.26093": "university-repo", "10.57745": "recherche-data-gouv",
+    "10.7272": "nimh-data", "10.5285": "bodc-nerc-eds", "10.26093": "university-repo", "10.57745": "recherche-data-gouv",
 }
 
 HOSTS = {
@@ -313,9 +314,11 @@ ON_REQUEST = re.compile(
     r"(?:available|provided|obtained|shared|accessible|supplied|made\s+available)\s+"
     r"(?:\w+\s+){0,6}?(?:up)?on\s+(?:\w+\s+){0,2}request"
     r"|(?:up)?on\s+(?:reasonable\s+)?request\s+(?:from|to)\s+the\s+(?:corresponding\s+)?authors?"
-    r"|(?:contact|request(?:ed)?\s+from)\s+the\s+corresponding\s+author",
+    r"|(?:contact|request(?:ed)?\s+from)\s+the\s+corresponding\s+author"
+    # Frontiers restricted-data template: "Requests to access these datasets should be directed to <name>"
+    r"|requests\s+to\s+access\s+(?:these|the|this)\s+data(?:sets?)?\s+should\s+be\s+directed\s+to",
     re.I)
-FUTURE = re.compile(r"will\s+be\s+(?:made\s+)?(?:publicly\s+)?(?:available|released|deposited|shared)"
+FUTURE = re.compile(r"will\s+(?:shortly\s+|soon\s+)?be\s+(?:made\s+)?(?:publicly\s+)?(?:available|released|deposited|shared)"
                     r"|(?:up)?on\s+(?:acceptance|publication)|coming\s+soon", re.I)
 IN_PAPER = re.compile(
     # Frontiers boilerplate: "The original contributions presented in the study are included in the article/Supplementary material"

@@ -73,7 +73,14 @@ def status_map(r: dict) -> dict:
     return {i["id"]: i["status"] for i in r.get("checklist", [])}
 
 
+def check_cols(results: List[dict]) -> List[str]:
+    """Batch columns; data_deposited only when the experimental checks were run."""
+    exp = any(r.get("experimental_checks") for r in results)
+    return [c for c in CHECK_COLS if exp or c != "data_deposited"]
+
+
 def batch_markdown(results: List[dict]) -> str:
+    CHECK_COLS = check_cols(results)   # noqa: N806
     head = ["Paper", "Score"] + CHECK_COLS
     lines = ["# Batch reproducibility audit", "", "| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
     for r in results:

@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 from .audit import audit
-from .report import CHECK_COLS, batch_markdown, status_map, to_markdown
+from .report import batch_markdown, check_cols, status_map, to_markdown
 
 
 def _slug(s: str) -> str:
@@ -64,6 +64,8 @@ def main(argv=None) -> int:
     ap.add_argument("-o", "--out", default="audit-out", help="output directory (default: audit-out)")
     ap.add_argument("--no-clone", action="store_true", help="skip shallow-cloning linked repos")
     ap.add_argument("--json", action="store_true", help="print JSON to stdout instead of Markdown")
+    ap.add_argument("--experimental", action="store_true",
+                    help="also run checks below the precision bar: data_deposited, not_future (see EVALUATION.md)")
     ap.add_argument("-q", "--quiet", action="store_true")
     a = ap.parse_args(argv)
     if a.input is None and not a.batch:
@@ -77,7 +79,7 @@ def main(argv=None) -> int:
 
     if a.input is not None and a.batch is None:
         try:
-            r = audit(a.input, clone=not a.no_clone, log=log)
+            r = audit(a.input, clone=not a.no_clone, log=log, experimental=a.experimental)
         except ValueError as e:
             return _fail(str(e))
         except Exception as e:  # noqa: BLE001 - never show a traceback to end users
@@ -103,7 +105,7 @@ def main(argv=None) -> int:
         print(f"[{n}/{len(inputs)}] {inp}", file=sys.stderr)
         t0 = time.monotonic()
         try:
-            r = audit(inp, clone=not a.no_clone, log=log)
+            r = audit(inp, clone=not a.no_clone, log=log, experimental=a.experimental)
         except Exception as e:  # noqa: BLE001 - keep batch going
             r = {"input": inp, "error": f"{type(e).__name__}: {e}",
                  "runtime_s": round(time.monotonic() - t0, 1)}
@@ -117,6 +119,7 @@ def main(argv=None) -> int:
         Path(f"{base}.md").write_text(md)
         r["output_bytes"] = len(js.encode()) + len(md.encode())
         results.append(r)
+    CHECK_COLS = check_cols(results)   # noqa: N806
     with open(out / "summary.csv", "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["input", "doi", "title", "score", "pass", "warn", "fail"] + CHECK_COLS
