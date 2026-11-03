@@ -1,6 +1,6 @@
 # EVALUATION — paper-repro-auditor
 
-## Ship bar (`SHIP_BAR.md`), 2026-11-03: **not met**
+## Ship bar (`docs/SHIP_BAR.md`), 2026-11-03: **not met**
 
 The ship bar needs two untouched rounds in a row passing with no code change between them. That did
 not happen within the 3-round cap. Every round failed on first run, and each failure was fixed (with
@@ -27,9 +27,9 @@ Label conventions:
 
 | Round | Commit run | Journals (field) | Judgments | First-run precision | Checks below 80% | Crashes | Overstated |
 |---|---|---|---|---|---|---|---|
-| S1 | `1354f82` | GMD (atmos. modelling), PeerJ CS, Phys Rev Research, A&A, Wellcome Open Res, Glossa (linguistics), BMC Public Health, Front Vet Sci, ACS Omega, Economies | 70 | **83%** | full_text 60%, code_link 67%, data_deposited 50% | 0 | 11 |
-| S2 | `b1d7271` | JOSS, GigaScience, IEEE Access, New J Phys, Ecosphere, PLOS NTD, JMIR, HESS (hydrology), Education Sciences, J R Soc Interface | 80 | **90%** | data_deposited 71% | 0 | 7 |
-| S3 | `6472c3b` | Front Neuroinform, npj Comput Mater, Socius (sociology), Research & Politics, J Stat Softw, BMJ Glob Health, Chem Sci, Evol Hum Sci, ESSD, J Archaeol Sci Rep | 81 | **93%** | data_deposited 71%, not_future 0% (1 judged) | 0 | 5 |
+| S1 | `b01912a` | GMD (atmos. modelling), PeerJ CS, Phys Rev Research, A&A, Wellcome Open Res, Glossa (linguistics), BMC Public Health, Front Vet Sci, ACS Omega, Economies | 70 | **83%** | full_text 60%, code_link 67%, data_deposited 50% | 0 | 11 |
+| S2 | `8dedf96` | JOSS, GigaScience, IEEE Access, New J Phys, Ecosphere, PLOS NTD, JMIR, HESS (hydrology), Education Sciences, J R Soc Interface | 80 | **90%** | data_deposited 71% | 0 | 7 |
+| S3 | `9b278ce` | Front Neuroinform, npj Comput Mater, Socius (sociology), Research & Politics, J Stat Softw, BMJ Glob Health, Chem Sci, Evol Hum Sci, ESSD, J Archaeol Sci Rep | 81 | **93%** | data_deposited 71%, not_future 0% (1 judged) | 0 | 5 |
 
 Per check, first run (correct + debatable / judged):
 
@@ -90,9 +90,9 @@ link WARNs from rate limits.
 
 ---
 
-## Adoption bar (`ADOPTION_BAR.md`), earlier pass
+## Adoption bar (`docs/ADOPTION_BAR.md`), earlier pass
 
-Status against the shared adoption bar (`ADOPTION_BAR.md`), measured 2026-11-03 on commit `main`.
+Status against the shared adoption bar (`docs/ADOPTION_BAR.md`), measured 2026-11-03 on commit `main`.
 
 | Bar item | Result |
 |---|---|
