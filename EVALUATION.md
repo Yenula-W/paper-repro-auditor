@@ -76,6 +76,12 @@ link WARNs from rate limits.
 | S3 | Front Neuroinform 613666 | on-request missed | Frontiers "Requests to access these datasets should be directed to …" |
 | S3 | npj Comput Mater 00889-2 | data PASS for a sample on GitHub | data only on a code host → WARN "no DOI archive; other data only on request" |
 
+### Post-ship fix (found while screening outreach candidates)
+
+| Paper | Wrong | Root cause → fix |
+|---|---|---|
+| Commun Biol 10.1038/s42003-025-09382-0, 10.1038/s42003-025-09398-6 | Zenodo DOIs and a GitHub URL reported dead (`zenodo.17789144110`, `zenodo.17705168154`, `insitu_probe_generator64`) | a superscript reference number glued onto a link that ends in a digit → strip 1–3 trailing digits when the shorter link appears on its own (hyperlink target, link annotation or reference list) and the longer one is never a hyperlink target |
+
 ### Ship-bar items 3–5
 
 - **Item 3 (install on the final commit):** see "Install" below. Re-run on the final commit with 3.9, 3.12 and 3.13; the README quickstart was run word for word.

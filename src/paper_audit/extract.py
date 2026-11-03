@@ -230,13 +230,28 @@ def _fix_pdf_breaks(text: str) -> str:
     return re.sub(r"(?<![/\w.])([A-Za-z]{2,})-\n([a-z]{2,})\b", r"\1\2", text)
 
 
-def _unglue_ref_number(url: str, text: str) -> str:
-    """PDF text glues a reference number onto a DOI: '.../DVN/ZJOUWB37.' where ref 37 is
-    '.../DVN/ZJOUWB'. Only strip when the DOI would otherwise end in a letter and that shorter
-    DOI appears on its own elsewhere in the paper (usually the reference list)."""
-    m = re.match(r"(https?://(?:dx\.)?doi\.org/10\.\d{4,9}/.*[A-Za-z])(\d{1,3})$", url)
-    if m and re.search(re.escape(m.group(1).split("doi.org/", 1)[1]) + r"(?![\w\-/])", text, re.I):
-        return m.group(1)
+def _link_key(url: str) -> str:
+    return re.sub(r"^https?://(?:www\.)?(?:dx\.)?(?:doi\.org/)?", "", url).lower().rstrip("/")
+
+
+def _unglue_ref_number(url: str, text: str, hrefs: frozenset = frozenset()) -> str:
+    """A reference number printed straight after a link gets glued onto it:
+    '10.5281/zenodo.17789144110 <https://doi.org/10.5281/zenodo.17789144>' (ref 110),
+    '.../DVN/ZJOUWB37.' (ref 37), 'github.com/rwnull/insitu_probe_generator64' (ref 64).
+    Strip 1-3 trailing digits only when the shorter link appears on its own elsewhere in the
+    paper (hyperlink target, link annotation or reference list) and the longer one is never a
+    hyperlink target itself, so a real DOI ending in digits is left alone."""
+    if not url[-1:].isdigit() or _link_key(url) in hrefs:
+        return url
+    for k in (1, 2, 3):
+        short = url[:-k]
+        if not short[-1].isalnum() or not url[-k].isdigit():
+            break
+        key = _link_key(short)
+        if len(key) < 12:
+            break
+        if key in hrefs or re.search(re.escape(key) + r"(?![\w\-/])", text, re.I):
+            return short
     return url
 
 
@@ -244,9 +259,12 @@ def find_links(body: str, statements: List[Statement], extra: Optional[List[str]
                self_doi: Optional[str] = None, full: Optional[str] = None) -> List[Link]:
     """Links worth auditing: everything in statements, plus repository-type links in the body."""
     found: dict = {}
+    # hyperlink targets: PDF/JATS link annotations and '<url>' targets kept inline in JATS text
+    hrefs = frozenset(_link_key(u) for u in list(extra or []) +
+                      re.findall(r"<(https?://[^>\s]+)>", (full or body) + "\n" + "\n".join(s.text for s in statements)))
 
     def add(url: str, in_stmt, ctx: str, pre: str = ""):
-        url = _unglue_ref_number(_clean_url(url), full or body)
+        url = _unglue_ref_number(_clean_url(url), full or body, hrefs)
         if len(url) < 12:
             return
         host, kind, rt = classify_url(url)

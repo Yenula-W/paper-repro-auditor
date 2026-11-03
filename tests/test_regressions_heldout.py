@@ -555,3 +555,29 @@ def test_experimental_checks_are_opt_in():
     on = {i["id"] for i in audit("x", clone=False, paper=p, experimental=True)["checklist"]}
     assert "data_deposited" not in off and "not_future" not in off
     assert {"data_deposited", "not_future"} <= on
+
+
+# ===================== candidate screening (Nov-Dec 2025 papers) =====================
+
+# --- Commun Biol 10.1038/s42003-025-09382-0 (JATS) and 10.1038/s42003-025-09398-6: a superscript
+#     reference number printed after a DOI that ends in a digit ("zenodo.17789144" + ref 110) was
+#     glued on and reported as a dead link, while the hyperlink target holds the real DOI
+def test_reference_number_glued_to_digit_doi():
+    stmt = ("Custom-written analysis scripts are shared at https://github.com/Canelab-USAL/Mismatch or "
+            "10.5281/zenodo.17789144110 <https://doi.org/10.5281/zenodo.17789144>.")
+    st = [Statement("code", "Code availability", stmt)]
+    urls = {l.url for l in find_links("body", st, full="\n## Code availability\n" + stmt)}
+    assert "https://doi.org/10.5281/zenodo.17789144" in urls
+    assert not any("17789144110" in u for u in urls)
+    # upper-case target, three glued digits (ref 154), and a ref number glued onto a GitHub repo name
+    stmt2 = ("The exact version of the code has been archived on Zenodo under the 10.5281/zenodo.17705168154 "
+             "<https://doi.org/10.5281/ZENODO.17705168>.")
+    body = "designed using insitu_probe_generator.py (https://github.com/rwnull/insitu_probe_generator64) and"
+    urls = {l.url.lower() for l in find_links(body, [Statement("code", "Code availability", stmt2)], full=stmt2 + body,
+                                              extra=["https://github.com/rwnull/insitu_probe_generator"])}
+    assert "https://doi.org/10.5281/zenodo.17705168" in urls
+    assert "https://github.com/rwnull/insitu_probe_generator" in urls
+    assert not any(u.endswith(("154", "generator64")) for u in urls)
+    # a real DOI that ends in digits and is itself the hyperlink target is never shortened
+    real = "Data: 10.5281/zenodo.7047191 <https://doi.org/10.5281/zenodo.7047191>; see also 10.5281/zenodo.70471."
+    assert "https://doi.org/10.5281/zenodo.7047191" in {l.url for l in find_links("b", [Statement("data", "Data availability", real)], full=real)}
