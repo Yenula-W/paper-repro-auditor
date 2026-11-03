@@ -30,7 +30,9 @@ ENTRY_GLOBS = [
 RUN_HINT = re.compile(
     r"(?im)^\s*(?:\$\s*)?(?:python3?|Rscript|R\s+CMD|bash|sh|make|snakemake|nextflow|julia|"
     r"matlab|docker\s+run|conda\s+(?:env\s+create|activate)|pip\s+install|jupyter|uv\s+run|"
-    r"poetry\s+run|quarto\s+render)\b")
+    r"poetry\s+run|quarto\s+render)\b"
+    r"|`{1,3}\s*(?:pip3?\s+install|conda\s+install|python3?|Rscript|make|docker\s+run|devtools::install)\b"
+    r"|^\s*(?:>>>\s*)?(?:library\(|import\s+\w|from\s+\w+\s+import)")
 USAGE_HEAD = re.compile(r"(?im)^#+\s*(?:usage|how\s+to\s+run|running|quick\s*start|getting\s+started|"
                         r"reproduc\w*|installation|instructions|example)")
 SCRIPT_REF = re.compile(r"(?<![\w/.-])([\w./-]+\.(?:py|R|r|sh|m|jl|ipynb|Rmd|nf))\b")

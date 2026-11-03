@@ -8,13 +8,14 @@ from dataclasses import dataclass, asdict
 from typing import List, Optional
 
 from . import __version__
-from .extract import ON_REQUEST, extract
+from .extract import OWN_CUE, data_code_requests, extract, sentence_before
 from .repocheck import check_repo
 from .resolve import resolve_link
 from .sources import Paper, load_paper
 
 PASS, WARN, FAIL, NA = "PASS", "WARN", "FAIL", "N/A"
-CODE_TYPES = {"github", "gitlab", "bitbucket", "codeocean", "swh", "sourceforge", "pypi", "cran", "bioconductor"}
+CODE_TYPES = {"github", "gitlab", "bitbucket", "codeocean", "swh", "sourceforge", "pypi", "cran", "bioconductor",
+              "googlecode"}
 MAX_LINKS = 30
 MAX_CLONES = 2
 CHECK_NAMES = {"dependency_file": "dependency file", "readme": "README", "readme_run_steps": "run instructions in README",
@@ -22,8 +23,10 @@ CHECK_NAMES = {"dependency_file": "dependency file", "readme": "README", "readme
                "readme_scripts_exist": "scripts named in README"}
 REGISTRY_TYPES = {"pypi", "cran", "bioconductor"}
 # "TensorFlow v.1 (url)", "WRF v3.9.1.1 source code ... here: url", "developed with X (url)"
-TOOL_CUE = re.compile(r"(?:\bv\.?\s?\d[\w.]*|version\s+\d[\w.]*|developed\s+(?:with|using)|"
-                      r"implemented\s+(?:in|with|using)|built\s+(?:with|on))\b[^()\n]{0,50}\(?\s*$", re.I)
+TOOL_CUE = re.compile(r"(?:\bv\.?\s?\d[\w.]*\)?|version\s+\d[\w.]*|developed\s+(?:with|using)|"
+                      r"implemented\s+(?:in|with|using)|built\s+(?:with|on))\b[^()\n]{0,50}\(?\s*$"
+                      # passive third-party use: "idock [33] (v2.1.3) was downloaded from (url)"
+                      r"|\b(?:was|were)\s+(?:downloaded|obtained|installed|retrieved)\s+(?:from|at|via)\s*\(?\s*$", re.I)
 
 
 @dataclass
@@ -37,12 +40,19 @@ class Item:
 def _is_code(l: dict) -> bool:
     if l.get("third_party"):
         return False
+    if l["kind"] == "web":
+        return False
+    # archive of unknown type in a code statement, or "analysis codes ... can be found on <OSF>"
     return (l["repo_type"] in CODE_TYPES or l["kind"] == "code"
-            or (l["kind"] == "archive" and l.get("stmt_kind") == "code"))  # archive of unknown type
+            or (l["kind"] == "archive" and l.get("stmt_kind") == "code")
+            or (l["kind"] == "archive" and l["in_statement"] and bool(CODE_WORDS.search((l.get("pre") or "")[-160:]))))
+
+
+CODE_WORDS = re.compile(r"\b(?:codes?|scripts?|software|source)\b", re.I)
 
 
 def _is_data(l: dict) -> bool:
-    return not _is_code(l) and not l.get("third_party") and (
+    return not _is_code(l) and not l.get("third_party") and l["kind"] != "web" and (
         l["kind"] in ("data", "archive") or (l["in_statement"] and l["kind"] == "doi"))
 
 
@@ -52,21 +62,50 @@ def _why(l: dict) -> str:
     return "host name no longer resolves"
 
 
+NOT_REPO = re.compile(r"/(?:issues|pull|discussions|wiki|blob/[^/]+/[^/]+\.(?:md|txt))(?:/|$)", re.I)
+
+
+_sentence = sentence_before
+
+
+def _owner(l: dict) -> Optional[str]:
+    m = re.match(r"https?://(?:www\.)?(?:github\.com|gitlab\.com|bitbucket\.org)/([^/]+)", l["url"], re.I)
+    return m.group(1).lower() if m else None
+
+
 def mark_third_party(links: List[dict]) -> None:
-    """Heuristically flag links to cited tools/dependencies (not the paper's own code)."""
+    """Heuristically flag links to cited tools/dependencies (not the paper's own code).
+
+    A code link counts as the authors' own when it is in an availability statement (and not
+    phrased as a versioned tool citation), when the text before it says it is available/ours,
+    or when it shares a git owner with such a link. Everything else (tool tables, issue
+    trackers, 'we used X (url)') is a cited tool.
+    """
     first_own = True
+    own_owners = set()
     for l in links:
         if l["repo_type"] not in CODE_TYPES:
             continue
-        cue = bool(TOOL_CUE.search(l.get("pre") or ""))
-        if l["repo_type"] in REGISTRY_TYPES and not l["in_statement"]:
+        pre = l.get("pre") or ""
+        if TOOL_CUE.search(pre[-80:]):
             l["third_party"] = True
-        elif cue:
+        elif l["repo_type"] in REGISTRY_TYPES and not l["in_statement"]:
             l["third_party"] = True
+        elif NOT_REPO.search(l["url"]):
+            l["third_party"] = True
+        elif not l["in_statement"] and not OWN_CUE.search(_sentence(pre[-160:])):
+            l["third_party"] = True
+            l["unclaimed"] = True        # no cue either way: could still be the authors' code
         elif not first_own and (l.get("stars") or 0) >= 5000:
             l["third_party"] = True
         if not l.get("third_party"):
             first_own = False
+            if _owner(l):
+                own_owners.add(_owner(l))
+    for l in links:   # e.g. FlyBrainLab/Tutorials next to FlyBrainLab/FlyBrainLab
+        if l.get("third_party") and _owner(l) in own_owners and not NOT_REPO.search(l["url"]) \
+                and not TOOL_CUE.search((l.get("pre") or "")[-80:]):
+            l["third_party"] = False
 
 
 def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict]) -> List[Item]:
@@ -79,11 +118,15 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
 
     stmts = ex["statements"]
     data_st = [s for s in stmts if s["kind"] in ("data", "both")]
-    code_st = [s for s in stmts if s["kind"] in ("code", "both")]
+    # a combined "Data and code availability" section only counts for code if it talks about code
+    code_st = [s for s in stmts if s["kind"] == "code"
+               or (s["kind"] == "both" and CODE_WORDS.search(s["text"]))]
     computational = ex["computational_hits"] >= 3
     code_links = [l for l in links if _is_code(l)]
     cited = [l for l in links if l.get("third_party")]
-    code_req = [s for s in code_st if ON_REQUEST.search(s["text"])]
+    unclaimed = [l for l in cited if l.get("unclaimed") and l["alive"] is not False]
+    web_own = [l for l in links if l["kind"] == "web" and l.get("own_web") and l["alive"] is not False]
+    code_req = [s for s in code_st if data_code_requests(s["text"])]
     data_links = [l for l in links if _is_data(l)]
     code_in_stmt = [l for l in code_links if l["in_statement"]]
 
@@ -96,6 +139,9 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
         add("code_statement", "Code availability statement", PASS, "code link given in availability statement")
     elif code_links:
         add("code_statement", "Code availability statement", WARN, "no dedicated statement; code linked in body text")
+    elif any(s["kind"] == "both" for s in stmts):
+        add("code_statement", "Code availability statement", WARN if computational else NA,
+            "a combined data/code availability section is present but does not mention code")
     else:
         add("code_statement", "Code availability statement", FAIL if computational else NA,
             "no code availability statement found" + ("" if computational else " (the paper does not appear to rely on custom code)"))
@@ -119,6 +165,14 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
     elif code_st:
         add("code_link", "Code link present", WARN,
             "code statement gives no source repository (web service / description only)" + cited_note)
+    elif web_own:
+        add("code_link", "Code link present", WARN if computational else NA,
+            "only a web service / project page is linked (" + ", ".join(l["url"] for l in web_own[:2])
+            + "); no source-code repository found")
+    elif unclaimed and computational:
+        add("code_link", "Code link present", WARN,
+            "code-host links found, but none is clearly identified as the authors' code: "
+            + ", ".join(l["url"] for l in unclaimed[:3]) + " (please check)")
     else:
         add("code_link", "Code link present", FAIL if computational else NA, "no link to the authors' own code found" + cited_note)
 
@@ -163,7 +217,7 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
             fails = [f'{r["url"].split("/")[-1]}: {CHECK_NAMES.get(c["id"], c["id"])}' for r in ok for c in r["checks"] if not c["passed"]]
             add("repo_checks", "Repo light checks", PASS if not fails else WARN, ("not found: " + ", ".join(fails)) if fails else "dependency file, README run steps, entry point and license present")
 
-    data_req = [st for st in data_st if ON_REQUEST.search(st["text"])]
+    data_req = [st for st in data_st if data_code_requests(st["text"])]
     # "All data and scripts ... are available at <github/swh>" => data deposited with the code
     data_in_code = [l for l in code_links if l.get("stmt_kind") in ("data", "both")
                     and any(re.search(r"\bdata\b", st["text"], re.I) and l["url"] in st["text"] for st in data_st)]
@@ -181,8 +235,8 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
             + ", ".join(l["url"] for l in (arch or data_in_code)[:3]))
     elif ex["data_in_paper"]:
         add("data_deposited", "Data deposited", WARN, "data are stated to be in the paper/supplement only; no repository deposit found")
-    elif ex["generated_data_terms"]:
-        add("data_deposited", "Data deposited", FAIL if ex.get("generated_data_verbs") else WARN,
+    elif ex["generated_data_terms"] and ex.get("generated_data_verbs"):
+        add("data_deposited", "Data deposited", FAIL,
             "methods mention " + ", ".join(ex["generated_data_terms"][:4]) + " but no repository link or accession number was found")
     else:
         add("data_deposited", "Data deposited", WARN, "no data repository link or accession number found")

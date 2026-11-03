@@ -34,6 +34,7 @@ class LinkResult:
     stars: Optional[int] = None
     size_kb: Optional[int] = None
     third_party: bool = False              # cited tool/dependency rather than the paper's own code
+    own_web: bool = False                  # the paper's own web service / project page
     notes: List[str] = field(default_factory=list)
 
     def to_dict(self):
@@ -60,7 +61,7 @@ def _gh_headers() -> dict:
 def _alive(url: str, r: http.Resp) -> Optional[bool]:
     if r.ok or 300 <= r.status < 400:
         return True
-    if r.status in (401, 403, 429, 999):
+    if r.status in (401, 403, 429, 999) or r.status >= 500:   # blocked or server error: not proof of death
         return None
     if r.status == 0:   # DNS failure => dead host; timeouts/TLS/etc => unknown
         return False if re.search(r"NameResolution|Failed to resolve|nodename", r.error) else None
@@ -184,6 +185,42 @@ def check_figshare(res: LinkResult) -> None:
         res.kind = "data"
 
 
+def check_osf(res: LinkResult) -> None:
+    """OSF project/component: exists? public? license? (OSF mints DOIs on request)."""
+    m = re.search(r"osf\.io/([a-z0-9]{5})\b", res.url, re.I) or re.search(r"10\.17605/osf\.io/([a-z0-9]{5})", res.url, re.I)
+    if not m:
+        check_http(res)
+        return
+    j = http.get_json(f"https://api.osf.io/v2/nodes/{m.group(1).lower()}/?embed=license")
+    if not j or "data" not in j:
+        check_http(res)    # files, registrations, preprints...: plain HTTP is enough
+        res.archived_doi = res.alive is not False
+        return
+    d = j["data"]
+    res.alive, res.status, res.archived_doi = True, 200, True
+    res.license = ((((d.get("embeds") or {}).get("license") or {}).get("data") or {})
+                   .get("attributes") or {}).get("name")
+    if not (d.get("attributes") or {}).get("public", True):
+        res.notes.append("OSF project is private")
+
+
+def check_googlecode(res: LinkResult) -> None:
+    """Google Code closed in 2016; projects survive only in a read-only archive bucket."""
+    m = re.search(r"code\.google\.com/(?:archive/)?p/([^/#?]+)", res.url)
+    if not m:
+        check_http(res)
+        return
+    r = http.request("https://storage.googleapis.com/google-code-archive/v2/code.google.com/"
+                     f"{m.group(1)}/project.json", retry=False)
+    res.status = r.status
+    res.alive = True if r.ok else (False if r.status in (403, 404) else None)
+    res.final_url = f"https://code.google.com/archive/p/{m.group(1)}"
+    if res.alive:
+        res.notes.append("Google Code shut down in 2016; only a read-only archive remains")
+    elif res.alive is False:
+        res.notes.append("project not found in the Google Code archive")
+
+
 def check_doi(res: LinkResult) -> None:
     check_http(res)
     if res.repo_type not in ("doi", "other"):
@@ -200,7 +237,7 @@ def check_doi(res: LinkResult) -> None:
 
 def resolve_link(link: Link, published: str = "") -> LinkResult:
     res = LinkResult(link.url, link.repo_type, link.kind, link.in_statement,
-                     stmt_kind=link.stmt_kind, pre=link.pre)
+                     stmt_kind=link.stmt_kind, pre=link.pre, own_web=link.own_web)
     try:
         if link.repo_type == "github":
             check_github(res, published)
@@ -210,6 +247,10 @@ def resolve_link(link: Link, published: str = "") -> LinkResult:
             check_zenodo(res)
         elif link.repo_type == "figshare":
             check_figshare(res)
+        elif link.repo_type == "googlecode":
+            check_googlecode(res)
+        elif link.repo_type == "osf":
+            check_osf(res)
         elif link.host in ("doi.org", "dx.doi.org"):
             if link.repo_type == "zenodo":
                 check_zenodo(res)

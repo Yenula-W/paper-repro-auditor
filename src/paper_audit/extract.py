@@ -23,6 +23,7 @@ HEADINGS = [
     (r"data,?\s+materials,?\s+and\s+software\s+availability", "both"),
     (r"open\s+(?:research|data)\s+statement", "data"),
     (r"data\s+records", "data"),
+    (r"software(?=\s*\n)", "code"),          # a section titled just "Software"
     (r"lead\s+contact\s+and\s+materials\s+availability", "both"),
 ]
 STOP = re.compile(
@@ -73,7 +74,7 @@ def find_statements(text: str, max_len: int = 1500) -> List[Statement]:
 
 # ---------------------------------------------------------------- links
 
-URL_RE = re.compile(r"(?:https?://|www\.)[^\s<>\"'\]\)}]+(?:\([^\s)]*\))?[^\s<>\"'\]\)}.,;:]*", re.I)
+URL_RE = re.compile(r"(?:https?://|www\.)[^\s<>\"'\]\)}\u200b]+(?:\([^\s)]*\))?[^\s<>\"'\]\)}.,;:]*", re.I)
 BARE_HOST_RE = re.compile(
     r"(?<![/\w.@])((?:github\.com|gitlab\.com|bitbucket\.org|zenodo\.org|osf\.io|figshare\.com|"
     r"datadryad\.org|codeocean\.com|huggingface\.co)/[^\s<>\"'\]\)}]+)", re.I)
@@ -93,7 +94,8 @@ HOSTS = {
     "github.com": ("github", "code"), "gitlab.com": ("gitlab", "code"),
     "bitbucket.org": ("bitbucket", "code"), "codeocean.com": ("codeocean", "code"),
     "softwareheritage.org": ("swh", "code"), "archive.softwareheritage.org": ("swh", "code"),
-    "sourceforge.net": ("sourceforge", "code"), "pypi.org": ("pypi", "code"),
+    "sourceforge.net": ("sourceforge", "code"), "code.google.com": ("googlecode", "code"),
+    "github.io": ("github-pages", "web"), "gitlab.io": ("gitlab-pages", "web"),   # project sites "pypi.org": ("pypi", "code"),
     "cran.r-project.org": ("cran", "code"), "bioconductor.org": ("bioconductor", "code"),
     "zenodo.org": ("zenodo", "archive"), "figshare.com": ("figshare", "archive"),
     "osf.io": ("osf", "archive"), "datadryad.org": ("dryad", "data"),
@@ -109,6 +111,7 @@ HOSTS = {
 
 ACCESSION_RES = [
     (re.compile(r"\bGSE\d{3,8}\b"), "GEO"),
+    (re.compile(r"\bGSE\s*[:#]?\s*\d{4,8}\b"), "GEO"),
     (re.compile(r"\b(?:PRJNA|PRJEB|PRJDB)\d{3,8}\b"), "BioProject"),
     (re.compile(r"\b(?:SRP|SRR|SRX|ERP|ERR|DRP)\d{5,9}\b"), "SRA/ENA"),
     (re.compile(r"\bE-[A-Z]{4}-\d{2,6}\b"), "ArrayExpress"),
@@ -132,10 +135,15 @@ class Link:
     in_statement: bool = False
     context: str = ""
     stmt_kind: Optional[str] = None   # kind of the availability statement it appeared in
-    pre: str = ""                      # ~60 chars of text before the link (for 'v1.2 (url)' cues)
+    own_web: bool = False              # body web resource introduced as "X is available at <url>"
+    pre: str = ""                      # ~160 chars of text before the link (ownership / 'v1.2 (url)' cues)
+
+
+DASHES = dict.fromkeys(map(ord, "\u2010\u2011\u2012\u2013\u2014\u2212\u00ad"), "-")
 
 
 def _clean_url(u: str) -> str:
+    u = u.translate(DASHES).replace("\u200b", "")   # typeset hyphens / zero-width spaces
     u = u.strip().rstrip(".,;:'\"")
     while u.endswith(")") and u.count("(") < u.count(")"):
         u = u[:-1]
@@ -168,13 +176,32 @@ def classify_url(url: str) -> tuple[str, str, str]:
     return host, "other", "other"
 
 
+OWN_CUE = re.compile(
+    r"(?:available|accessible|deposited|released|provided|found|obtained|downloaded|hosted|shared|archived)"
+    r"\s+(?:\w+\s+){0,4}?(?:at|from|on|in|via|under)\b"
+    r"|\bour\s+(?:\w+\s+)?(?:code|software|implementation|repository|scripts?|package|tool|pipeline|analysis)"
+    r"|source\s+code|\bcode\s+(?:is|are|for|used|to)\b|scripts?\s+(?:is|are|used|to)\b"
+    r"|\bwe\s+(?:provide|release|share|make)\b|implementation\s+(?:is|of\s+(?:our|the\s+proposed))",
+    re.I)
+
+
+THIRD_PARTY_SOURCE = re.compile(r"\b(?:downloaded|obtained|retrieved|taken|extracted|accessed)\b"
+                                r"|\[\s*\d+(?:\s*[,\u2013-]\s*\d+)*\s*\]", re.I)
+
+
+def sentence_before(pre: str) -> str:
+    """Only the sentence the link sits in: '...can be found in Table 1. It is possible to use X (url'."""
+    return re.split(r"(?<=[.!?])\s+(?=[A-Z(])", pre)[-1]
+
+
 def _context(text: str, i: int, j: int, w: int = 120) -> str:
     return " ".join(text[max(0, i - w): j + w].split())
 
 
 def _fix_pdf_breaks(text: str) -> str:
     """Re-join URLs broken across PDF line wraps (e.g. 'github.com/user/\\nrepo')."""
-    return re.sub(r"((?:https?://|github\.com/|zenodo\.org/|doi\.org/)\S*[/\-_.=])\n(?=[\w\-])", r"\1", text)
+    # '.' is deliberately not a join point: "github.com/x/repo.\n40th Conference" is a sentence end
+    return re.sub(r"((?:https?://|github\.com/|zenodo\.org/|doi\.org/)\S*[/\-_=])\n(?=[\w\-])", r"\1", text)
 
 
 def find_links(body: str, statements: List[Statement], extra: Optional[List[str]] = None,
@@ -197,8 +224,10 @@ def find_links(body: str, statements: List[Statement], extra: Optional[List[str]
                 found[key].in_statement, found[key].stmt_kind = True, in_stmt
                 found[key].pre = pre
             return
-        found[key] = Link(url, host, kind, rt, bool(in_stmt), ctx, in_stmt or None, pre)
+        found[key] = Link(url=url, host=host, kind=kind, repo_type=rt, in_statement=bool(in_stmt),
+                          context=ctx, stmt_kind=in_stmt or None, pre=pre)
 
+    web: set = set()
     srcs = [(s.text, s.kind) for s in statements] + [(_fix_pdf_breaks(body), None)]
     for src, in_stmt in srcs:
         hits = []
@@ -206,6 +235,11 @@ def find_links(body: str, statements: List[Statement], extra: Optional[List[str]
             host, kind, _ = classify_url(_clean_url(m.group(0)))
             if in_stmt or kind != "other" and kind != "doi":
                 hits.append((m.start(), m.end(), m.group(0)))
+            elif kind == "other" and OWN_CUE.search(sentence_before(src[max(0, m.start() - 160):m.start()])):
+                sent = sentence_before(src[max(0, m.start() - 160):m.start()])
+                if not THIRD_PARTY_SOURCE.search(sent):   # "genes downloaded from the EcoGene site (url)"
+                    web.add(_clean_url(m.group(0)).lower().rstrip("/"))   # "server is freely available at <url>"
+                hits.append((m.start(), m.end(), m.group(0)))    # still checked: the paper relies on it
         for m in BARE_HOST_RE.finditer(src):
             hits.append((m.start(), m.end(), "https://" + m.group(1)))
         for m in DOI_TXT_RE.finditer(src):
@@ -213,8 +247,10 @@ def find_links(body: str, statements: List[Statement], extra: Optional[List[str]
             if in_stmt or doi.split("/")[0] in REPO_DOI_PREFIX:
                 hits.append((m.start(), m.end(), "https://doi.org/" + doi))
         for i, j, u in sorted(hits):   # keep reading order
-            add(u, in_stmt, _context(src, i, j), " ".join(src[max(0, i - 60):i].split()))
-    stmt_text = "\n".join(s.text for s in statements)
+            add(u, in_stmt, _context(src, i, j), " ".join(src[max(0, i - 160):i].split()))
+    for key in web:
+        if key in found and not found[key].in_statement:
+            found[key].kind, found[key].own_web = "web", True
     for u in extra or []:
         host, kind, _ = classify_url(_clean_url(u))
         if kind not in ("other", "doi"):
@@ -227,9 +263,10 @@ def find_accessions(text: str) -> List[dict]:
     out, seen = [], set()
     for rx, db in ACCESSION_RES:
         for m in rx.finditer(text):
-            if m.group(0) not in seen:
-                seen.add(m.group(0))
-                out.append({"id": m.group(0), "db": db})
+            acc = re.sub(r"\s*[:#]\s*|\s+", "", m.group(0))   # "GSE: 123209" -> "GSE123209"
+            if acc not in seen:
+                seen.add(acc)
+                out.append({"id": acc, "db": db})
     return out
 
 
@@ -271,6 +308,26 @@ GEN_VERBS = re.compile(r"\bwe\s+(?:collected|recorded|generated|acquired|sequenc
                        r"recruited|interviewed|sampled)\b|participants\s+were\s+recruited", re.I)
 
 
+MATERIALS = re.compile(r"\b(?:mice|mouse\s+lines?|plasmids?|strains?|cell\s+lines?|antibod\w+|reagents?|"
+                       r"materials?|constructs?|animals|seeds?|samples?|specimens?|resources?|vectors?)\b", re.I)
+DATA_OR_CODE = re.compile(r"\b(?:data(?:sets?)?|code|scripts?|software|analys[ie]s|results|models?)\b", re.I)
+
+
+def is_materials_request(snippet: str) -> bool:
+    """'Mice and plasmids ... are available upon request' concerns materials, not data/code."""
+    sentence = re.split(r"(?<=[.;])\s+", snippet[:snippet.lower().rfind("request") + 7])[-1]
+    return bool(MATERIALS.search(sentence)) and not DATA_OR_CODE.search(sentence)
+
+
+def data_code_requests(text: str) -> List[str]:
+    out = []
+    for m in ON_REQUEST.finditer(text):
+        snip = text[max(0, m.start() - 200):m.end()]
+        if not is_materials_request(snip):
+            out.append(_context(text, m.start(), m.end(), 80))
+    return out
+
+
 def find_phrases(rx: re.Pattern, text: str, limit: int = 5) -> List[str]:
     return [_context(text, m.start(), m.end(), 80) for m in list(rx.finditer(text))[:limit]]
 
@@ -302,7 +359,7 @@ def extract(body: str, full: str, extra_links=None, self_doi=None) -> Extraction
         statements=stmts,
         links=find_links(body, stmts, extra_links, self_doi),
         accessions=find_accessions(scope),
-        on_request=find_phrases(ON_REQUEST, scope),
+        on_request=data_code_requests(scope)[:5],
         future_release=find_phrases(FUTURE, stmt_text),
         data_in_paper=find_phrases(IN_PAPER, stmt_text),
         no_data=find_phrases(NO_DATA, stmt_text),

@@ -22,6 +22,8 @@ DOI_RE = re.compile(r"\b(10\.\d{4,9}/[^\s\"<>]+)", re.I)
 ARXIV_NEW = re.compile(r"(?:arxiv[:/ ]\s*|arxiv\.org/(?:abs|pdf)/)?(\d{4}\.\d{4,5})(v\d+)?", re.I)
 ARXIV_OLD = re.compile(r"(?:arxiv[:/ ]\s*|arxiv\.org/(?:abs|pdf)/)([a-z\-]+(?:\.[A-Z]{2})?/\d{7})(v\d+)?", re.I)
 XLINK = "{http://www.w3.org/1999/xlink}href"
+BLOCK_TAGS = {"td", "th", "tr", "list-item", "label", "caption", "table-wrap", "fig", "break",
+              "disp-quote", "def-item", "term", "def", "mixed-citation", "element-citation"}
 
 
 @dataclass
@@ -122,13 +124,30 @@ def strip_references(text: str) -> str:
 
 def jats_to_text(xml: str) -> tuple[str, str, List[str]]:
     """Return (body_text_without_refs, full_text, links) from JATS XML."""
+    from .extract import classify_url   # local import: extract does not import sources
     root = ET.fromstring(xml)
     links: List[str] = []
+
+    # numbered citations ("archived in Zenodo [50]") -> the cited repository URL/DOI
+    ref_urls = {}
+    for ref in root.iter():
+        if not (isinstance(ref.tag, str) and ref.tag.split("}")[-1] == "ref" and ref.get("id")):
+            continue
+        urls = [e.get(XLINK) for e in ref.iter() if e.get(XLINK)]
+        urls = ["https://doi.org/" + u if u.startswith("10.") else u for u in urls]
+        urls += ["https://doi.org/" + d.rstrip(".,;)") for d in DOI_RE.findall(" ".join(ref.itertext()))]
+        urls += ["https://doi.org/" + (e.text or "").strip() for e in ref.iter()
+                 if isinstance(e.tag, str) and e.tag.endswith("pub-id") and e.get("pub-id-type") == "doi" and e.text]
+        keep = [u for u in urls if classify_url(u)[1] not in ("other", "doi")]
+        if keep:
+            ref_urls[ref.get("id")] = list(dict.fromkeys(keep))
 
     def walk(el, out, skip_refs):
         tag = el.tag.split("}")[-1] if isinstance(el.tag, str) else ""
         if skip_refs and tag in ("ref-list", "ref"):
             return
+        if tag == "ref-list":           # hard section boundary even when the list has no <title>
+            out.append("\n\n## References\n")
         if tag == "custom-meta":
             name = el.findtext("meta-name") or ""
             val_el = el.find("meta-value")
@@ -152,8 +171,14 @@ def jats_to_text(xml: str) -> tuple[str, str, List[str]]:
                 links.append(href)
                 if href not in "".join(el.itertext()):
                     out.append(f" <{href}>")
+        if tag == "xref" and el.get("ref-type") == "bibr":
+            for rid in (el.get("rid") or "").split():
+                for u in ref_urls.get(rid, []):
+                    out.append(f" <{u}>")
         if tag in ("p", "sec", "notes", "fn", "statement"):
             out.append("\n\n")
+        elif tag in BLOCK_TAGS:     # table cells, list items...: keep words/URLs apart
+            out.append("\n")
         if el.tail:
             out.append(el.tail)
 

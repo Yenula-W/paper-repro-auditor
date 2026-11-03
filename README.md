@@ -7,9 +7,15 @@ It is aimed at journal reproducibility/data editors and reviewers. Give it one p
 CSV of DOIs for a whole issue.
 
 ```bash
-pip install -e .                          # Python >= 3.9; deps: requests, pypdf
-export GITHUB_TOKEN=...                   # optional; avoids GitHub's 60 req/h anonymous limit
+python3 -m venv .venv && source .venv/bin/activate
+pip install "git+https://github.com/Yenula-W/paper-repro-auditor"   # Python >= 3.9; deps: requests, pypdf
+paper-audit 10.1371/journal.pone.0224321  # first audit; report in audit-out/
+```
 
+More inputs:
+
+```bash
+export GITHUB_TOKEN=...                   # optional; avoids GitHub's 60 req/h anonymous limit
 paper-audit 10.1038/s41586-021-03819-2    # DOI
 paper-audit arXiv:1706.03762              # arXiv id
 paper-audit paper.pdf                     # local PDF (or a PDF URL)
@@ -21,6 +27,8 @@ also writes `summary.csv` and `summary.md` (one row per paper, one column per ch
 that fails does not stop the batch; it gets an `error` entry in `summary.csv`.
 
 Flags: `--no-clone` skips the repo checks, `--json` prints JSON instead of Markdown, `-q` is quiet.
+Exit codes: 0 = report written, 2 = input could not be audited (message on stderr, no traceback;
+set `PAPER_AUDIT_DEBUG=1` to see one). Batch `summary.csv` also records runtime and output size per paper.
 
 ## What it checks
 
