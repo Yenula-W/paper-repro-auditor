@@ -258,8 +258,33 @@ def _fetch_pdf(url: str) -> Optional[bytes]:
     return None
 
 
+def strip_line_numbers(text: str) -> str:
+    """Drop manuscript line numbers (bioRxiv/medRxiv): '... upon 652 \nreasonable request. 653'.
+    Only a long, mostly consecutive run of trailing (or leading) numbers is treated as line numbers."""
+    lines = text.split("\n")
+    for rx in (re.compile(r"[ \t]+(\d{1,5})[ \t]*$"), re.compile(r"^[ \t]*(\d{1,5})[ \t]+")):
+        nums = [(i, int(m.group(1))) for i, line in enumerate(lines) for m in [rx.search(line)] if m]
+        steps = [b - a for (_, a), (_, b) in zip(nums, nums[1:])]
+        if len(nums) < 20 or sum(1 <= d <= 3 for d in steps) < 0.6 * len(steps):
+            continue
+        last = None
+        for i, n in nums:
+            if last is None or 0 < n - last <= 5:
+                lines[i] = rx.sub("", lines[i], count=1)
+                last = n
+    return "\n".join(lines)
+
+
+def collapse_spaced_caps(text: str) -> str:
+    """Letter-spaced small-caps headings come out of pypdf as 'DA T A A V AILABILITY' (APS);
+    rejoin such all-capital lines so the heading can be recognised."""
+    return re.sub(r"(?m)^[ \t]*((?=[A-Z ]*\b[A-Z]\b)[A-Z]{1,12}(?: [A-Z]{1,12}){2,8})[ \t]*$",
+                  lambda m: m.group(1).replace(" ", ""), text)
+
+
 def _use_pdf(p: Paper, data: bytes, source: str) -> bool:
     text, links, err = safe_pdf_to_text(data)
+    text = collapse_spaced_caps(strip_line_numbers(text))
     if err or not text.strip():
         p.warnings.append(err or "PDF contains no extractable text (scanned image?)")
         return False

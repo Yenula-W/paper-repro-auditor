@@ -581,3 +581,53 @@ def test_reference_number_glued_to_digit_doi():
     # a real DOI that ends in digits and is itself the hyperlink target is never shortened
     real = "Data: 10.5281/zenodo.7047191 <https://doi.org/10.5281/zenodo.7047191>; see also 10.5281/zenodo.70471."
     assert "https://doi.org/10.5281/zenodo.7047191" in {l.url for l in find_links("b", [Statement("data", "Data availability", real)], full=real)}
+
+
+# --- Phys Rev (APS) 10.1103/fnhb-bzqr via arXiv 2608.08544: letter-spaced small-caps heading
+#     "DA T A A V AILABILITY" was missed, and "10.5281/zen-\nodo.17975543" became a dead "zen-" link
+def test_aps_spaced_caps_heading_and_zenodo_hyphenation():
+    from paper_audit.sources import collapse_spaced_caps
+    raw = ("FIG. A.1. The scheme of optical detection in this experiment.\nDA T A A V AILABILITY\n"
+           "The data that support the findings of this article are\nopenly available [65], embargo periods may apply.\n"
+           "Appendix A: Optical detection method\n")
+    st = find_statements(collapse_spaced_caps(raw))
+    assert st and st[0].kind == "data" and "openly available" in st[0].text
+    refs = ("[65] Y. Sheng, Data for: Levitated milligram-scale ferromag-\nnetic magnetometer at room temperature, "
+            "10.5281/zen-\nodo.17975543 (2025).\n")
+    ex = extract(raw + refs, raw + refs)
+    urls = {l.url for l in ex.links}
+    assert "https://doi.org/10.5281/zenodo.17975543" in urls
+    assert not any(u.rstrip("/").endswith("zen-") for u in urls)
+
+
+# --- npj Digit Med 10.1038/s41746-026-03406-7 (AnySleep, PDF): "https://doi.\norg/10.25822/nx52-bc11"
+#     gave a dead "https://doi.org/10", and a Box share ID wrapped mid-token gave a truncated 404 URL
+def test_anysleep_wrapped_host_and_share_id():
+    st_text = ("All datasets analyzed during the current study are publicly available. In the\nfollowing, we list "
+               "the datasets and the URLs to access them: ABC (https://doi.\norg/10.25822/nx52-bc11), CCSHS ( "
+               "https://doi.org/10.25822/cg2n-4y91),\nCHAT ( https://doi.org/10.\n25822/d68d-8g03), SSC ( https://stanfordmedicine.app.box.com/s/r9e92ygq0erf7hn5re6j51\n"
+               "aaggf50jly), CAP ( https://doi.org/10.13026/C2VC79).\n")
+    full = "\nData availability\n" + st_text + "\nCode availability\nCode at https://github.com/dslaborg/AnySleep.\n"
+    urls = {l.url for l in extract("We trained a deep learning model.", full).links}
+    assert "https://doi.org/10.25822/nx52-bc11" in urls
+    assert "https://stanfordmedicine.app.box.com/s/r9e92ygq0erf7hn5re6j51aaggf50jly" in urls
+    assert "https://doi.org/10.25822/d68d-8g03" in urls
+    assert "https://doi.org/10" not in urls and not any(u.endswith("6j51") for u in urls)
+    # a hyphen inside a DOI suffix wrapped at the line end is kept: "10.25822/xmwv-\nyz91"
+    assert "https://doi.org/10.25822/xmwv-yz91" in {l.url for l in extract(
+        "b", "\nData availability\nWSC ( https://doi.org/10.25822/xmwv-\nyz91), MESA.\n").links}
+
+
+# --- bioRxiv 10.64898/2026.01.22.700881: manuscript line numbers ran into statements
+#     ("upon 652 \nreasonable request.  653")
+def test_biorxiv_line_numbers_stripped():
+    from paper_audit.sources import strip_line_numbers
+    lines = [f"Methods sentence number {i} about kettle lakes and amphibians. {600 + i} " for i in range(50)]
+    lines += ["Data availability statement: Data are available from the corresponding author upon 652 ",
+              "reasonable request.  653 ", "Conflict of interest statement: The authors declare none. 654 "]
+    out = strip_line_numbers("\n".join(lines))
+    assert "upon\nreasonable request." in out and " 652" not in out and " 653" not in out
+    assert "number 7 about" in out                       # numbers inside sentences are untouched
+    # ordinary text whose lines happen to end in a number is left alone
+    plain = "\n".join(f"Table row {i}: value {i * 37 % 101}" for i in range(40))
+    assert strip_line_numbers(plain) == plain

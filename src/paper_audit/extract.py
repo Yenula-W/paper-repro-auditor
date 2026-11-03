@@ -225,7 +225,16 @@ def _fix_pdf_breaks(text: str) -> str:
     # '.' is deliberately not a join point: "github.com/x/repo.\n40th Conference" is a sentence end,
     # except for DOI stems that cannot end there: "10.5281/zenodo.\n906991"
     text = re.sub(r"(\b10\.\d{4,9}/(?:zenodo|m9\.figshare|dryad)\.)\s*\n\s*(?=\d|[a-z0-9]{5})", r"\1", text)
-    text = re.sub(r"((?:https?://|github\.com/|zenodo\.org/|doi\.org/)\S*[/\-_=])\n(?=[\w\-])", r"\1", text)
+    # repository names hyphenated at a line end: "10.5281/zen-\nodo.17975543"
+    text = re.sub(r"\b(zen)-\s*\n\s*(odo\.)|\b(fig)-\s*\n\s*(share\b)|\b(dry)-\s*\n\s*(ad\b)",
+                  lambda m: "".join(g for g in m.groups() if g), text)
+    # host broken after a dot: "https://doi.\norg/10.25822/nx52-bc11"
+    text = re.sub(r"(https?://[\w-]+(?:\.[\w-]+)*\.)[ \t]*\n[ \t]*(?=(?:org|com|net|edu|gov|io|ac|co|uk|de|eu)/)", r"\1", text)
+    # ... or after the DOI prefix dot: "https://doi.org/10.\n25822/d68d-8g03"
+    text = re.sub(r"(\b10\.)[ \t]*\n[ \t]*(?=\d{4,9}/)", r"\1", text)
+    text = re.sub(r"((?:https?://|github\.com/|zenodo\.org/|doi\.org/|\b10\.\d{4,9}/)\S*[/\-_=])\n(?=[\w\-])", r"\1", text)
+    # an opaque share ID wrapped mid-token: ".../s/r9e92ygq0erf7hn5re6j51\naaggf50jly)"
+    text = re.sub(r"(https?://\S+/[A-Za-z0-9]{12,})[ \t]*\n(?=[a-z0-9]*(?:[a-z]\d|\d[a-z])[a-z0-9]*[)\],;])", r"\1", text)
     # word hyphenation outside URLs: "made publicly avail-\nable" -> "available"
     return re.sub(r"(?<![/\w.])([A-Za-z]{2,})-\n([a-z]{2,})\b", r"\1\2", text)
 
