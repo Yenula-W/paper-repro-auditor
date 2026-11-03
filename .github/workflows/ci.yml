@@ -24,7 +24,7 @@ jobs:
           uv venv -p ${{ matrix.python }} .venv
           uv pip install -p .venv -e '.[test]'
           .venv/bin/python --version
-      - name: Tests (offline, recorded fixtures)
+      - name: Tests (offline, synthetic responses)
         run: .venv/bin/python -m pytest -q
       - name: CLI smoke test (offline)
         run: |

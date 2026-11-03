@@ -186,13 +186,15 @@ Real problems it caught (all confirmed by hand):
 
 ```bash
 uv venv -p 3.11 .venv && uv pip install -p .venv -e '.[test]'
-.venv/bin/pytest -q          # 106 tests, no network (recorded fixtures in tests/fixtures/)
+.venv/bin/pytest -q          # 107 tests, no network
 ```
 
-To add a fixture, record it:
+The end-to-end tests run on invented papers and API payloads (`tests/synthetic.py`), so no third-party
+paper text is stored in the repository. To capture real responses for local debugging, record them
+outside the repo:
 
 ```bash
-PAPER_AUDIT_RECORD=tests/fixtures/<name> paper-audit <doi> --no-clone
+PAPER_AUDIT_RECORD=/tmp/rec paper-audit <doi> --no-clone   # then PAPER_AUDIT_REPLAY=/tmp/rec
 ```
 
 Authorization headers are never part of cache keys or saved files.
@@ -205,3 +207,7 @@ Layout:
 - `audit.py`: checklist
 - `report.py`: Markdown output
 - `cli.py`: command line
+
+## License and citation
+
+MIT (see [`LICENSE`](LICENSE)). To cite, see [`CITATION.cff`](CITATION.cff).

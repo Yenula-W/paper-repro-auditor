@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "paper-repro-auditor: automated reproducibility checklist for publications"
+type: software
+authors:
+  - alias: Yenula-W
+version: 0.1.0
+date-released: 2026-11-03
+license: MIT
+repository-code: "https://github.com/Yenula-W/paper-repro-auditor"
+abstract: >-
+  paper-audit reads a paper (DOI, arXiv id or PDF), finds its data and code
+  availability statements and links, checks that the links resolve, that code is
+  archived, licensed and versioned, runs light repository checks, and writes a
+  Markdown + JSON checklist report.
+keywords:
+  - reproducibility
+  - research software
+  - open science
+  - data availability

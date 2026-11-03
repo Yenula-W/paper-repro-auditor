@@ -311,7 +311,7 @@ Every message template was reviewed for accuracy and tone:
 ## 6. CI (bar item 6)
 
 `.github/workflows/ci.yml`: uv-managed Python on Ubuntu (3.9, 3.12, 3.13) and macOS (3.9, 3.12); runs the
-106 offline tests (recorded HTTP fixtures, no network) and a CLI smoke test. All green.
+107 offline tests (synthetic HTTP responses, no network) and a CLI smoke test. All green.
 (`actions/setup-python` no longer provides 3.9 on Ubuntu 26.04 runners, hence uv.)
 
 ## Known limitations
