@@ -15,7 +15,7 @@ dedupe), so it could not count.
 used before: 30 journals in total, none from earlier rounds, one field label each (`examples/ship_r*.csv`). Each round ran once on the
 committed code, with an HTTP cache recording exactly what the tool saw. Every judgment was then labelled by
 hand against the paper text, with links re-checked by `curl` or the GitHub API, before any code was touched.
-Labels and first-run scores are in `examples/ship_r{1,2,3}_labels.csv` and
+Commit ids are after the 2026-11-03 history rewrite that removed recorded third-party test fixtures. Labels and first-run scores are in `examples/ship_r{1,2,3}_labels.csv` and
 `examples/ship_r{1,2,3}_eval_firstrun.md`.
 
 Label conventions:
@@ -27,9 +27,9 @@ Label conventions:
 
 | Round | Commit run | Journals (field) | Judgments | First-run precision | Checks below 80% | Crashes | Overstated |
 |---|---|---|---|---|---|---|---|
-| S1 | `740b81c` | GMD (atmos. modelling), PeerJ CS, Phys Rev Research, A&A, Wellcome Open Res, Glossa (linguistics), BMC Public Health, Front Vet Sci, ACS Omega, Economies | 70 | **83%** | full_text 60%, code_link 67%, data_deposited 50% | 0 | 11 |
-| S2 | `5defad2` | JOSS, GigaScience, IEEE Access, New J Phys, Ecosphere, PLOS NTD, JMIR, HESS (hydrology), Education Sciences, J R Soc Interface | 80 | **90%** | data_deposited 71% | 0 | 7 |
-| S3 | `9b9540e` | Front Neuroinform, npj Comput Mater, Socius (sociology), Research & Politics, J Stat Softw, BMJ Glob Health, Chem Sci, Evol Hum Sci, ESSD, J Archaeol Sci Rep | 81 | **93%** | data_deposited 71%, not_future 0% (1 judged) | 0 | 5 |
+| S1 | `1354f82` | GMD (atmos. modelling), PeerJ CS, Phys Rev Research, A&A, Wellcome Open Res, Glossa (linguistics), BMC Public Health, Front Vet Sci, ACS Omega, Economies | 70 | **83%** | full_text 60%, code_link 67%, data_deposited 50% | 0 | 11 |
+| S2 | `b1d7271` | JOSS, GigaScience, IEEE Access, New J Phys, Ecosphere, PLOS NTD, JMIR, HESS (hydrology), Education Sciences, J R Soc Interface | 80 | **90%** | data_deposited 71% | 0 | 7 |
+| S3 | `6472c3b` | Front Neuroinform, npj Comput Mater, Socius (sociology), Research & Politics, J Stat Softw, BMJ Glob Health, Chem Sci, Evol Hum Sci, ESSD, J Archaeol Sci Rep | 81 | **93%** | data_deposited 71%, not_future 0% (1 judged) | 0 | 5 |
 
 Per check, first run (correct + debatable / judged):
 
