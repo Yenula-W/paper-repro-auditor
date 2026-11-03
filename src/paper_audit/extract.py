@@ -33,7 +33,9 @@ STOP = re.compile(
     r"\n\s*(?:##\s*)?(?:references|acknowledg|author\s+contributions?|competing\s+interests?|"
     r"conflicts?\s+of\s+interest|declaration|funding|ethics|additional\s+information|"
     r"supplementary\s+(?:information|material)|correspondence|publisher'?s\s+note|"
-    r"code\s+availability|data\s+availability|reporting\s+summary|extended\s+data|"
+    r"code\s+availability|data\s+availability|reporting\s+summary|"
+    # Nature "Extended Data" figures end a statement; F1000/Wellcome "Extended data Zenodo: ..." is part of it
+    r"extended\s+data(?!\s+[A-Z][\w ]{0,40}:)|"
     r"financial\s+disclosure|abbreviations|consent|orcid|keywords?)\b",
     re.I,
 )
@@ -46,7 +48,7 @@ class Statement:
     text: str
 
 
-def find_statements(text: str, max_len: int = 1500) -> List[Statement]:
+def find_statements(text: str, max_len: int = 2500) -> List[Statement]:
     structured = "\n## " in text   # JATS-derived text keeps section titles as '## '
     out: List[Statement] = []
     seen_spans = []
@@ -154,6 +156,9 @@ DASHES = dict.fromkeys(map(ord, "\u2010\u2011\u2012\u2013\u2014\u2212\u00ad"), "
 
 BOILERPLATE = re.compile(r"(?:^|\.)(?:creativecommons\.org|orcid\.org|crossmark\.crossref\.org|"
                          r"loop\.frontiersin\.org|copyright\.com|w3\.org|schema\.org)$")
+# literature, not data: PubMed/PMC "Free Full Text" links of the reference list, F1000 referee reports
+LITERATURE = re.compile(r"ncbi\.nlm\.nih\.gov/(?:pubmed|pmc)\b|pubmed\.ncbi\.nlm\.nih\.gov|"
+                        r"europepmc\.org/(?:abstract|article)|doi\.org/10\.21956/", re.I)
 
 
 def _clean_url(u: str) -> str:
@@ -223,13 +228,23 @@ def _fix_pdf_breaks(text: str) -> str:
     return re.sub(r"(?<![/\w.])([A-Za-z]{2,})-\n([a-z]{2,})\b", r"\1\2", text)
 
 
+def _unglue_ref_number(url: str, text: str) -> str:
+    """PDF text glues a reference number onto a DOI: '.../DVN/ZJOUWB37.' where ref 37 is
+    '.../DVN/ZJOUWB'. Only strip when the DOI would otherwise end in a letter and that shorter
+    DOI appears on its own elsewhere in the paper (usually the reference list)."""
+    m = re.match(r"(https?://(?:dx\.)?doi\.org/10\.\d{4,9}/.*[A-Za-z])(\d{1,3})$", url)
+    if m and re.search(re.escape(m.group(1).split("doi.org/", 1)[1]) + r"(?![\w\-/])", text, re.I):
+        return m.group(1)
+    return url
+
+
 def find_links(body: str, statements: List[Statement], extra: Optional[List[str]] = None,
-               self_doi: Optional[str] = None) -> List[Link]:
+               self_doi: Optional[str] = None, full: Optional[str] = None) -> List[Link]:
     """Links worth auditing: everything in statements, plus repository-type links in the body."""
     found: dict = {}
 
     def add(url: str, in_stmt, ctx: str, pre: str = ""):
-        url = _clean_url(url)
+        url = _unglue_ref_number(_clean_url(url), full or body)
         if len(url) < 12:
             return
         host, kind, rt = classify_url(url)
@@ -238,7 +253,7 @@ def find_links(body: str, statements: List[Statement], extra: Optional[List[str]
             return
         if key.endswith((".pdf",)) and kind == "other":
             return
-        if BOILERPLATE.search(host):     # licences of the article itself, author IDs, publisher chrome
+        if BOILERPLATE.search(host) or LITERATURE.search(url):   # article licence, author IDs, cited papers
             return
         if key in found:
             if in_stmt and not found[key].in_statement:
@@ -302,10 +317,13 @@ ON_REQUEST = re.compile(
 FUTURE = re.compile(r"will\s+be\s+(?:made\s+)?(?:publicly\s+)?(?:available|released|deposited|shared)"
                     r"|(?:up)?on\s+(?:acceptance|publication)|coming\s+soon", re.I)
 IN_PAPER = re.compile(
-    r"(?:all\s+)?(?:relevant\s+)?data\s+(?:are|is|were)\s+(?:included|available|provided|contained|presented)\s+"
+    # Frontiers boilerplate: "The original contributions presented in the study are included in the article/Supplementary material"
+    r"(?:(?:all\s+)?(?:relevant\s+)?data|original\s+contributions(?:\s+presented\s+in\s+the\s+study)?)\s+"
+    r"(?:are|is|were)\s+(?:included|available|provided|contained|presented)\s+"
     r"(?:\w+\s+){0,3}(?:in|within)\s+the\s+(?:paper|article|manuscript|main\s+text|supplement\w*|supporting)",
     re.I)
 NO_DATA = re.compile(r"no\s+(?:new\s+)?data\s+(?:were|was)\s+(?:generated|created|used)|"
+                     r"(?:used|uses|generated|contains)\s+no\s+(?:new\s+)?data\b|"
                      r"data\s+sharing\s+(?:is\s+)?not\s+applicable", re.I)
 
 COMPUTATIONAL = re.compile(
@@ -378,7 +396,7 @@ def extract(body: str, full: str, extra_links=None, self_doi=None) -> Extraction
     gen = sorted({m.group(0).lower() for m in GENERATED_DATA.finditer(body)})
     return Extraction(
         statements=stmts,
-        links=find_links(body, stmts, extra_links, self_doi),
+        links=find_links(body, stmts, extra_links, self_doi, full),
         accessions=find_accessions(scope),
         on_request=data_code_requests(scope)[:5],
         future_release=find_phrases(FUTURE, stmt_text),

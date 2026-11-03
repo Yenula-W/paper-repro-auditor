@@ -344,3 +344,112 @@ def test_verbs_alone_do_not_fail_data():
 def test_duplicate_statements_collapsed():
     t = "## Data Availability\nAll data are on OSF https://osf.io/x .\n\n## Data Availability Statement\nAll data are on OSF https://osf.io/x .\n"
     assert len(find_statements(t)) == 1
+
+
+# ===================== ship-bar round 1 (10 new journals) =====================
+
+# --- Phys Rev Research 10.1103/physrevresearch.2.023290, A&A 10.1051/0004-6361/201937108:
+#     OpenAlex now lists OA copies under "locations" (not "oa_locations"), so the arXiv PDF was never tried
+def test_openalex_locations_are_tried(monkeypatch):
+    from paper_audit import sources
+    tried = []
+    monkeypatch.setattr(sources, "crossref_meta", lambda d: {"title": "T"})
+    monkeypatch.setattr(sources, "europepmc_pmcid", lambda d: None)
+    monkeypatch.setattr(sources, "openalex", lambda d: {
+        "open_access": {"is_oa": True},
+        "best_oa_location": {"pdf_url": "https://publisher.example/blocked.pdf"},
+        "locations": [{"is_oa": True, "pdf_url": "https://arxiv.org/pdf/2002.05448"},
+                      {"is_oa": False, "pdf_url": "https://closed.example/x.pdf"}]})
+    monkeypatch.setattr(sources, "_fetch_pdf", lambda u: tried.append(u))
+    p = sources.load_paper("10.1103/physrevresearch.2.023290")
+    assert "https://arxiv.org/pdf/2002.05448" in tried and "https://closed.example/x.pdf" not in tried
+    assert p.is_oa is True
+
+
+# --- Glossa 10.5334/gjgl.583, MDPI Economies 10.3390/economies12070176: open access, but the
+#     publisher blocks automated downloads -> not a FAIL of the paper
+def test_open_access_but_blocked_is_warn():
+    base = {"text_source": "none", "warnings": ["no open-access full text retrievable"]}
+    assert _status(build_checklist({**base, "is_oa": True}, {}, [], []))["full_text"] == "WARN"
+    assert _status(build_checklist({**base, "is_oa": False}, {}, [], []))["full_text"] == "FAIL"
+
+
+# --- Wellcome Open Res 10.12688/wellcomeopenres.16323.1 (PDF): reference number 37 glued onto
+#     the Dataverse DOI ("…/DVN/ZJOUWB37.") -> reported as a dead link
+def test_reference_number_glued_to_doi():
+    body = "Harvard Dataverse: Replication Data. https://doi.org/10.7910/DVN/ZJOUWB37. The project"
+    full = body + "\nReferences\n37. Ngari MM: Replication Data. http://www.doi.org/10.7910/DVN/ZJOUWB\n"
+    urls = {l.url for l in find_links(body, [], full=full)}
+    assert urls == {"https://doi.org/10.7910/DVN/ZJOUWB"}
+    # a DOI that really ends in digits is left alone
+    z = "Code: https://doi.org/10.5281/zenodo.1234567. See also zenodo.12345 elsewhere."
+    assert {l.url for l in find_links(z, [], full=z)} == {"https://doi.org/10.5281/zenodo.1234567"}
+
+
+# --- same paper: F1000/Wellcome "Extended data <repository>:" is part of the statement, while a
+#     Nature "Extended Data" heading still ends it
+def test_f1000_extended_data_kept_in_statement():
+    t = ("\nData availability\nUnderlying data Harvard Dataverse: Replication data. https://doi.org/10.7910/DVN/X.\n"
+         "Extended data Harvard Dataverse: Replication data. This project contains analysis_v1.do (STATA script).\n"
+         "\nAcknowledgments\nThanks.")
+    st = find_statements(t)
+    assert "STATA script" in st[0].text and "Thanks" not in st[0].text
+    n = "\nData availability\nAll data are in the Source Data files provided with this paper.\nExtended data\nFig. 1 shows"
+    assert "Fig. 1" not in find_statements(n)[0].text
+
+
+# --- same paper: STATA .do scripts deposited in the Dataverse record are the paper's archived code
+def test_scripts_in_data_archive_count_as_code():
+    text = ("Underlying data Harvard Dataverse: https://doi.org/10.7910/DVN/ZJOUWB. Extended data: "
+            "post-discharge analysis.do (STATA script that runs the analysis). Data are available under CC BY 4.0.")
+    st = [{"kind": "data", "heading": "Data availability", "text": text}]
+    ex = {"statements": st, "on_request": [], "future_release": [], "data_in_paper": [], "no_data": [],
+          "computational_hits": 8, "generated_data_terms": [], "generated_data_verbs": [], "accessions": []}
+    l = _link("https://doi.org/10.7910/DVN/ZJOUWB", in_statement=True, stmt_kind="data", archived_doi=True)
+    s = _status(build_checklist({"text_source": "pdf", "warnings": []}, ex, [l], []))
+    assert s["code_link"] == s["code_archived"] == s["code_license"] == s["data_deposited"] == "PASS"
+    # "Discharge_diagnosis codes.csv" alone is a data file, not code
+    from paper_audit.audit import CODE_MENTION
+    assert not CODE_MENTION.search("Discharge_diagnosis codes.csv (list of codes for discharge diagnosis)."[:30])
+
+
+# --- same paper: PubMed / PMC "Free Full Text" links in the reference list are not data deposits
+def test_pubmed_links_are_literature():
+    urls = {l.url for l in find_links("text", [], extra=["http://www.ncbi.nlm.nih.gov/pubmed/26254555",
+                                                         "http://www.ncbi.nlm.nih.gov/pmc/articles/6091952",
+                                                         "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE1"])}
+    assert urls == {"https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE1"}
+
+
+# --- PeerJ CS 10.7717/peerj-cs.735: "The article used no data as it is a literature review."
+def test_literature_review_statement_needs_no_code_or_data():
+    t = "\nData Availability\nThe following information was supplied regarding data availability: The article used no data as it is a literature review.\n"
+    ex = extract("We trained deep learning models, neural network, machine learning, convolutional.", t)
+    from dataclasses import asdict
+    s = _status(build_checklist({"text_source": "x", "warnings": []}, asdict(ex), [], []))
+    assert s["code_statement"] == s["code_link"] == s["data_deposited"] == "N/A"
+
+
+# --- Front Vet Sci 10.3389/fvets.2024.1415423: Frontiers boilerplate puts the data in the
+#     article/supplement -> WARN, not "no data deposited" FAIL
+def test_frontiers_original_contributions_in_article():
+    t = ("\nData availability statement\nThe original contributions presented in the study are included in the "
+         "article/Supplementary material, further inquiries can be directed to the corresponding author.\n")
+    ex = extract("We sampled 1,170 cattle and tested the serum. A questionnaire was administered.", t)
+    assert ex.data_in_paper
+    from dataclasses import asdict
+    s = _status(build_checklist({"text_source": "x", "warnings": []}, asdict(ex), [], []))
+    assert s["data_deposited"] == "WARN" and s["not_on_request"] == "PASS"
+
+
+# --- GMD 10.5194/gmd-15-3281-2022: "The NACC code is available at <Zenodo>" in a combined
+#     code-and-data section does not make the Zenodo software record a data deposit
+def test_code_archive_is_data_only_if_its_sentence_says_data():
+    text = ("The NACC code is publicly available at https://doi.org/10.5281/zenodo.5507489 and via GitHub. "
+            "The GFS data are available in GRIB2 format at https://www.nco.ncep.noaa.gov/pmb/products/gfs/ (NOAA).")
+    st = [{"kind": "both", "heading": "Code and data availability", "text": text}]
+    ex = {"statements": st, "on_request": [], "future_release": [], "data_in_paper": [], "no_data": [],
+          "computational_hits": 30, "generated_data_terms": [], "generated_data_verbs": [], "accessions": []}
+    z = _link("https://doi.org/10.5281/zenodo.5507489", in_statement=True, stmt_kind="both", archived_doi=True, kind="code")
+    w = _link("https://www.nco.ncep.noaa.gov/pmb/products/gfs/", in_statement=True, stmt_kind="both")
+    assert _status(build_checklist({"text_source": "x", "warnings": []}, ex, [z, w], []))["data_deposited"] == "WARN"

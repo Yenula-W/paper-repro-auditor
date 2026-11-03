@@ -55,10 +55,22 @@ LICENSE_TEXT = re.compile(r"\b(?:(?:new\s+|modified\s+|simplified\s+)?BSD|MIT|Ap
                           r"GNU\s+(?:Lesser\s+|Affero\s+)?General\s+Public|CC[- ]BY(?:[- ]\w+)*|CC0|"
                           r"Creative\s+Commons|Mozilla\s+Public|Artistic)\b(?:[^.]{0,30}?licen[cs]e)?", re.I)
 CODE_MENTION = re.compile(r"\b(?<!accession )(?<!access )(?<!postal )(?:(?:source\s+|analysis\s+|simulation\s+|computer\s+)?codes?|scripts?|"
-                          r"jupyter\s+notebooks?|R\s+markdown)\b", re.I)
+                          r"jupyter\s+notebooks?|R\s+markdown)\b(?!\.\w)", re.I)   # not "diagnosis codes.csv"
 SUPP_CODE = re.compile(r"\b(?:codes?|scripts?|notebooks?)\b[^.]{0,120}\b(?:supplement\w*|supporting\s+information|"
                        r"additional\s+files?|appendix)\b", re.I)
 CODE_WORDS = re.compile(r"\b(?:codes?|scripts?|software|source)\b", re.I)
+# analysis code listed as files of a data deposit: "analysis_v1.do (STATA script ...)" in a Dataverse record
+CODE_FILES = re.compile(r"\b(?:[Ss]cripts?|[Nn]otebooks?|[Ss]ource\s+code|[Aa]nalysis\s+code|do-files?)\b|\w\.(?:do|R|Rmd|py|ipynb|jl)\b")
+# "The article used no data as it is a literature review."
+REVIEW_STMT = re.compile(r"\b(?:literature|systematic|narrative|scoping)\s+review\b|\b(?:is|as)\s+an?\s+(?:\w+\s+)?(?:review|survey)\b", re.I)
+
+
+def _sentence_with(text: str, url: str) -> str:
+    i = text.find(url)
+    if i < 0:
+        return ""
+    end = text.find(". ", i + len(url))
+    return text[text.rfind(". ", 0, i) + 1: end if end >= 0 else len(text)]
 
 
 def _is_data(l: dict) -> bool:
@@ -129,7 +141,12 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
     items: List[Item] = []
     add = lambda *a: items.append(Item(*a))  # noqa: E731
     if paper["text_source"] == "none":
-        add("full_text", "Full text retrieved", FAIL, "; ".join(paper["warnings"]) or "no open-access text")
+        if paper.get("is_oa"):   # the paper is open; the publisher just blocks automated downloads
+            add("full_text", "Full text retrieved", WARN,
+                "the paper is listed as open access, but no full text could be downloaded automatically "
+                "(the publisher may block automated downloads); audit a saved PDF instead: paper-audit paper.pdf")
+        else:
+            add("full_text", "Full text retrieved", FAIL, "; ".join(paper["warnings"]) or "no open-access text")
         return items
     add("full_text", "Full text retrieved", PASS, paper["text_source"])
     atype = (paper.get("article_type") or "").lower()
@@ -149,7 +166,13 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
     supp_code = [s for s in code_st if SUPP_CODE.search(s["text"])]
     computational = ex["computational_hits"] >= 3 or any(
         CODE_MENTION.search(s["text"]) for s in stmts)
+    if ex["no_data"] and any(REVIEW_STMT.search(s["text"]) for s in data_st):
+        computational = False   # a literature review that states it used no data needs no code either
     code_links = [l for l in links if _is_code(l)]
+    # a DOI archive (Dataverse, Zenodo dataset ...) whose statement lists analysis scripts holds code too
+    code_links += [l for l in links if l not in code_links and l["in_statement"] and l["archived_doi"]
+                   and not l.get("third_party") and l["kind"] in ("data", "archive", "doi")
+                   and any(l["url"].split("doi.org/")[-1] in st["text"] and CODE_FILES.search(st["text"]) for st in stmts)]
     cited = [l for l in links if l.get("third_party")]
     unclaimed = [l for l in cited if l.get("unclaimed") and l["alive"] is not False]
     web_own = [l for l in links if l["kind"] == "web" and l.get("own_web") and l["alive"] is not False]
@@ -238,7 +261,8 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
             else:
                 add("code_license", "Code has a license", WARN,
                     "license could not be checked automatically for this host and none is stated in the paper")
-        pinned = [l for l in code_links + archived if l.get("pinned_ref") or l.get("releases_before_pub") or l["archived_doi"]]
+        pinned = list({l["url"]: l for l in code_links + archived
+                       if l.get("pinned_ref") or l.get("releases_before_pub") or l["archived_doi"]}.values())
         drift = [l for l in gits if l.get("commits_after_pub")]
         if pinned:
             add("version_pinned", "Version/tag matching paper", PASS,
@@ -261,8 +285,9 @@ def build_checklist(paper: dict, ex: dict, links: List[dict], repos: List[dict])
     # data-type terms only ("RNA-seq", "questionnaire"); verbs alone ("we measured") prove nothing
     data_terms = [t for t in ex["generated_data_terms"] if not t.startswith("we ") and "participants" not in t]
     # "All data and scripts ... are available at <github/swh>" => data deposited with the code
+    # the sentence holding the link must mention data ("The NACC code is available at <zenodo>" does not)
     data_in_code = [l for l in code_links if l.get("stmt_kind") in ("data", "both")
-                    and any(re.search(r"\bdata(?:sets?)?\b", st["text"], re.I) and l["url"] in st["text"] for st in data_st)]
+                    and any(re.search(r"\bdata(?:sets?)?\b", _sentence_with(st["text"], l["url"]), re.I) for st in data_st)]
     if data_req and not data_links and not ex["accessions"]:
         add("data_deposited", "Data deposited", FAIL, "data only 'available on request'")
     elif ex["no_data"] and not data_links:

@@ -41,6 +41,7 @@ class Paper:
     text_source: str = "none"
     article_type: str = ""         # JATS article-type, e.g. research-article / review-article
     pdf_links: List[str] = field(default_factory=list)   # link annotations from PDF
+    is_oa: Optional[bool] = None   # OpenAlex says open access (set only when no text was found)
     warnings: List[str] = field(default_factory=list)
 
 
@@ -345,7 +346,10 @@ def load_paper(inp: str) -> Paper:
 
     # 2) open-access PDF candidates (OpenAlex, Unpaywall, Crossref links)
     cands: List[str] = []
-    for loc in [oa.get("best_oa_location") or {}] + (oa.get("oa_locations") or []):
+    # OpenAlex renamed "oa_locations" to "locations" (each with is_oa); read both
+    locs = [oa.get("best_oa_location") or {}] + (oa.get("oa_locations") or []) + [
+        l for l in (oa.get("locations") or []) if l.get("is_oa")]
+    for loc in locs:
         if loc.get("pdf_url"):
             cands.append(loc["pdf_url"])
     email = os.environ.get("UNPAYWALL_EMAIL")
@@ -360,4 +364,5 @@ def load_paper(inp: str) -> Paper:
         if data and _use_pdf(p, data, f"pdf:{url}"):
             return p
     p.warnings.append("no open-access full text retrievable (tried Europe PMC, OpenAlex/Unpaywall PDFs)")
+    p.is_oa = bool((oa.get("open_access") or {}).get("is_oa"))
     return p
