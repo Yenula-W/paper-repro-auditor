@@ -98,6 +98,8 @@ The tests use replay mode.
 
 ## Hand-checked results
 
+> **Adoption evaluation:** see [`EVALUATION.md`](EVALUATION.md) — 48 held-out papers (0 crashes) and 360 hand-checked judgments (91% precision on the last untouched round, 84% across all first runs, every found error fixed with a regression test). The table below is the original 13-paper development set.
+
 The tool was run on 13 open-access papers across fields. For each paper I read the
 availability sections and links in the source (Europe PMC XML / arXiv PDF) by hand. Dead or
 blocked links were re-checked with `curl` and the GitHub API. I compared 7 checklist items per
@@ -178,7 +180,7 @@ Real problems it caught (all confirmed by hand):
 
 ```bash
 uv venv -p 3.11 .venv && uv pip install -p .venv -e '.[test]'
-.venv/bin/pytest -q          # 13 tests, no network (recorded fixtures in tests/fixtures/)
+.venv/bin/pytest -q          # 89 tests, no network (recorded fixtures in tests/fixtures/)
 ```
 
 To add a fixture, record it:

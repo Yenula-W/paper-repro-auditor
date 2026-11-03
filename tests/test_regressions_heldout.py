@@ -338,3 +338,9 @@ def test_verbs_alone_do_not_fail_data():
           "computational_hits": 10, "accessions": [], "generated_data_terms": ["we measured"],
           "generated_data_verbs": ["we measured"]}
     assert _status(build_checklist(paper, ex, [], []))["data_deposited"] == "WARN"
+
+
+# --- PLOS (README quickstart paper 10.1371/journal.pone.0224321): statement repeated in meta + back
+def test_duplicate_statements_collapsed():
+    t = "## Data Availability\nAll data are on OSF https://osf.io/x .\n\n## Data Availability Statement\nAll data are on OSF https://osf.io/x .\n"
+    assert len(find_statements(t)) == 1

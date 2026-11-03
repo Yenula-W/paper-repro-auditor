@@ -75,6 +75,8 @@ def find_statements(text: str, max_len: int = 1500) -> List[Statement]:
                 continue
             # the span ends where the statement ends, so a following heading is still found
             seen_spans.append((m.start(g), start + len(raw)))
+            if any(o.text == para for o in out):   # PLOS repeats the statement in front + back matter
+                continue
             out.append(Statement(kind, " ".join(m.group(g).split()), para))
     return out
 
