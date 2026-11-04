@@ -71,13 +71,13 @@ def test_arxiv_pdf(net):
 
 def test_batch_cli(net, tmp_path):
     inp = tmp_path / "dois.csv"
-    inp.write_text(f"doi,note\n{syn.ZENODO_DOI},x\nnot-a-doi,bad\n")
+    inp.write_text(f"doi,note\n{syn.ZENODO_DOI},x\nnot-a-doi,bad\n", encoding="utf-8")
     out = tmp_path / "out"
     assert main(["--batch", str(inp), "-o", str(out), "--no-clone", "-q"]) == 0
     rows = list(csv.DictReader(open(out / "summary.csv")))
     assert rows[0]["score"] == "100"
     assert rows[1]["error"]                      # bad input reported, batch continues
-    assert json.loads((out / "10.5555_example.zenodo.json").read_text())["paper"]["doi"]
+    assert json.loads((out / "10.5555_example.zenodo.json").read_text(encoding="utf-8"))["paper"]["doi"]
     assert (out / "summary.md").exists()
 
 

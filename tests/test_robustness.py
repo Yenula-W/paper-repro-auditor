@@ -42,7 +42,7 @@ def test_corrupt_pdf_does_not_crash(content, tmp_path, capsys):
     f.write_bytes(content)
     code, out, err = run_cli([str(f), "-o", str(tmp_path / "o"), "--no-clone", "-q"], capsys)
     assert code == 0
-    r = json.loads((tmp_path / "o" / "bad.json").read_text())
+    r = json.loads((tmp_path / "o" / "bad.json").read_text(encoding="utf-8"))
     assert r["checklist"][0]["status"] == "FAIL"
     assert r["paper"]["warnings"]
 
@@ -179,7 +179,7 @@ def test_load_paper_bad_xml_falls_back(monkeypatch):
 def test_scan_dir_messy(tmp_path):
     (tmp_path / "loop").symlink_to(tmp_path)                 # symlink loop
     (tmp_path / "README.md").write_bytes(b"\xff\xfe\x00 binary readme \x80\x81")
-    (tmp_path / "ünï 文件.py").write_text("print(1)")
+    (tmp_path / "ünï 文件.py").write_text("print(1)", encoding="utf-8")
     (tmp_path / "broken-link").symlink_to(tmp_path / "missing")
     locked = tmp_path / "locked"
     locked.mkdir()
@@ -202,7 +202,7 @@ def test_audit_with_injected_empty_paper():
     assert r["checklist"][0]["status"] == "FAIL"
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permissions")
+@pytest.mark.skipif(sys.platform == "win32" or os.geteuid() == 0, reason="root ignores permissions")
 def test_unwritable_output_dir(tmp_path, capsys):
     ro = tmp_path / "ro"
     ro.mkdir()

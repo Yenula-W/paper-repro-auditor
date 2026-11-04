@@ -195,7 +195,7 @@ def test_ownership_cue_is_sentence_local():
 
 def test_readme_inline_install_counts_as_run_step(tmp_path):
     from paper_audit.repocheck import scan_dir
-    (tmp_path / "README.md").write_text("# tool\n## Installation\nThe easiest way is ```pip install ghostipy```.\n" + "x" * 300)
+    (tmp_path / "README.md").write_text("# tool\n## Installation\nThe easiest way is ```pip install ghostipy```.\n" + "x" * 300, encoding="utf-8")
     c = {c["id"]: c["passed"] for c in scan_dir(tmp_path)["checks"]}
     assert c["readme_run_steps"]
 
