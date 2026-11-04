@@ -133,7 +133,8 @@ def test_batch_bom_header_is_read(tmp_path, capsys):
 # ------------------------------------------------------------- parsers
 
 @pytest.mark.parametrize("xml", ["", "<article>", "<<<>>>", "\x00\x01", "<a><b></a>",
-                                 "<article>" + "<sec>" * 5000 + "deep" + "</sec>" * 5000 + "</article>"])
+                                 "<article>" + "<sec>" * 5000 + "deep" + "</sec>" * 5000 + "</article>"],
+                         ids=["empty", "open", "junk", "control", "mismatch", "deep"])
 def test_malformed_or_deep_xml(xml):
     try:
         body, full, links = jats_to_text(xml)
