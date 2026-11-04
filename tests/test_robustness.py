@@ -152,7 +152,8 @@ def test_pdf_to_text_garbage():
 
 @pytest.mark.parametrize("text", ["", "\x00" * 100, "Data availability" * 1000,
                                   "https://" * 500, "Code availability:\n" + "x" * 200000,
-                                  "10.5281/zenodo." + "9" * 5000])
+                                  "10.5281/zenodo." + "9" * 5000],
+                         ids=["empty", "nulls", "repeated", "urls", "long-code", "long-doi"])
 def test_extract_weird_text(text):
     ex = extract(text, text)
     assert isinstance(ex.links, list)
