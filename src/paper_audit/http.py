@@ -70,7 +70,7 @@ def _load(d: Path, k: str) -> Optional[Resp]:
     meta = d / f"{k}.json"
     if not meta.exists():
         return None
-    m = json.loads(meta.read_text())
+    m = json.loads(meta.read_text(encoding="utf-8"))
     body = (d / f"{k}.bin").read_bytes() if (d / f"{k}.bin").exists() else b""
     return Resp(m["url"], m["status"], body, m.get("content_type", ""), m.get("error", ""))
 
@@ -79,7 +79,7 @@ def _save(d: Path, k: str, req_url: str, r: Resp) -> None:
     d.mkdir(parents=True, exist_ok=True)
     (d / f"{k}.json").write_text(json.dumps(
         {"request": req_url, "url": r.url, "status": r.status,
-         "content_type": r.content_type, "error": r.error}, indent=1))
+         "content_type": r.content_type, "error": r.error}, indent=1), encoding="utf-8")
     (d / f"{k}.bin").write_bytes(r.content)
 
 

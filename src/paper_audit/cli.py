@@ -57,6 +57,8 @@ def _fail(msg: str) -> int:
 
 
 def main(argv=None) -> int:
+    for stream in (sys.stdout, sys.stderr):  # Windows consoles cannot print every character
+        stream.reconfigure(errors="replace")
     ap = argparse.ArgumentParser(prog="paper-audit",
                                  description="Audit whether a paper links everything needed to reproduce its computational results.")
     ap.add_argument("input", nargs="?", help="DOI, arXiv id, or PDF path/URL")
@@ -88,8 +90,8 @@ def main(argv=None) -> int:
             return _fail(f"audit failed ({type(e).__name__}: {e}). Set PAPER_AUDIT_DEBUG=1 for details.")
         base = out / _slug(r["paper"].get("doi") or r["paper"].get("arxiv_id") or Path(a.input).stem)
         md = to_markdown(r)
-        Path(f"{base}.json").write_text(json.dumps(r, indent=2))
-        Path(f"{base}.md").write_text(md)
+        Path(f"{base}.json").write_text(json.dumps(r, indent=2), encoding="utf-8")
+        Path(f"{base}.md").write_text(md, encoding="utf-8")
         print(json.dumps(r, indent=2) if a.json else md)
         print(f"wrote {base}.md / .json", file=sys.stderr)
         return 0
@@ -115,12 +117,12 @@ def main(argv=None) -> int:
         base = out / _slug(r["paper"].get("doi") or r["paper"].get("arxiv_id") or inp)
         md = to_markdown(r)
         js = json.dumps(r, indent=2)
-        Path(f"{base}.json").write_text(js)
-        Path(f"{base}.md").write_text(md)
+        Path(f"{base}.json").write_text(js, encoding="utf-8")
+        Path(f"{base}.md").write_text(md, encoding="utf-8")
         r["output_bytes"] = len(js.encode()) + len(md.encode())
         results.append(r)
     CHECK_COLS = check_cols(results)   # noqa: N806
-    with open(out / "summary.csv", "w", newline="") as f:
+    with open(out / "summary.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["input", "doi", "title", "score", "pass", "warn", "fail"] + CHECK_COLS
                    + ["runtime_s", "output_bytes", "error"])
@@ -133,7 +135,7 @@ def main(argv=None) -> int:
             w.writerow([r["paper"]["input"], r["paper"].get("doi") or "", r["paper"].get("title", "")[:150],
                         s["score"], s["pass"], s["warn"], s["fail"]] + [m.get(c, "") for c in CHECK_COLS]
                         + [r["runtime_s"], r.get("output_bytes", ""), ""])
-    (out / "summary.md").write_text(batch_markdown(results))
+    (out / "summary.md").write_text(batch_markdown(results), encoding="utf-8")
     print(batch_markdown(results))
     print(f"wrote {len(results)} reports + summary.csv/summary.md to {out}/", file=sys.stderr)
     return 0

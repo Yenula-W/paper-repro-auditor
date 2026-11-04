@@ -1,0 +1,24 @@
+name: compat
+on: [push, pull_request]
+jobs:
+  compat:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: windows-latest, python: "3.9"}
+          - {os: windows-latest, python: "3.12"}
+          - {os: windows-latest, python: "3.14"}
+          - {os: macos-latest, python: "3.14"}
+          - {os: ubuntu-latest, python: "3.14"}
+          - {os: ubuntu-latest, python: "3.15"}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          allow-prereleases: true
+      - run: python -m pip install ".[dev]" pytest
+        shell: bash
+      - run: python -m pytest -q

@@ -54,7 +54,7 @@ def scan_dir(path) -> dict:
     files = _files(root)
 
     def read(name):
-        return (root / name).read_text(errors="replace")
+        return (root / name).read_text(encoding="utf-8", errors="replace")
     return scan_tree([str(f) for f in files], read)
 
 
